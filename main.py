@@ -10,10 +10,9 @@ from langchain.schema import (
     AIMessage,
 )
 from langchain.embeddings import OpenAIEmbeddings
-from langchain.memory import VectorStoreRetrieverMemory
-import faiss
-from langchain.docstore import InMemoryDocstore
-from langchain.vectorstores import FAISS
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.vectorstores import Chroma
+from langchain.chains import RetrievalQA
 
 def init():
     # Load the OpenAI API key from the environment variable
@@ -56,47 +55,39 @@ def main():
             SystemMessage(content="You are a helpful assistant.")
         ]
 
-    # TODO Call the model and store & display response & handle user input
-    ######################################################
-    if uploaded_file and user_input:
-        article = uploaded_file.read().decode()
-        # Extract text and chunk and vectorize it
-        embeddings = OpenAIEmbeddings()
-        query_result = embeddings.embed_query(user_input)
-        doc_result = embeddings.embed_documents([article])
+    def generate_response(uploaded_file, user_input):
+        if uploaded_file and user_input:
+            # Extract text 
+            documents = [uploaded_file.read().decode()]
+            # Break text into chunks
+            text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+            texts = text_splitter.create_documents(documents)
+            # embed
+            embeddings = OpenAIEmbeddings()
+            # Store vectors (vectorstore)
+            db = Chroma.from_documents(texts, embeddings)
+            # Create retriever interface
+            retriever = db.as_retriever()
+            # Create QA chain
+            qa = RetrievalQA.from_chain_type(llm=chat, chain_type='stuff', retriever=retriever)
+            return qa.run(user_input)
 
-        # Store vectors (vectorstore)
-        embedding_size = 1536 #text-embedding-ada-002 model dimension size magic number
-        index = faiss.IndexFlatL2(embedding_size)
-        embedding_fn = OpenAIEmbeddings().embed_query(user_input)
-        vectorstore = FAISS(embedding_fn, index, InMemoryDocstore({}), {})
-        #TODO FINISH THIS PART by creating a vectorStoreRetrieverMemory
-        retriever = vectorstore.as_retriever(search_kwargs=dict(k=1))
-        memory = VectorStoreRetrieverMemory(retriever=retriever)
-
+    if user_input:
         prompt = HumanMessage(content=user_input)
         st.session_state.messages.append(prompt)
         with st.spinner("Thinking..."):
-            response = chat(st.session_state.messages)
-        st.session_state.messages.append(AIMessage(content=response.content))
+            #response = chat(st.session_state.messages)
+            response = generate_response(uploaded_file, user_input)
+        # st.session_state.messages.append(AIMessage(content=response.content))
+        st.session_state.messages.append(AIMessage(content=response))
 
-        # display message history
-        messages = st.session_state.get('messages', [])
-        for i, msg in enumerate(messages[1:]):
-            if i % 2 == 0:
-                message(msg.content, is_user=True, key=str(i) + '_user')
-            else:
-                message(msg.content, is_user=False, key=str(i) + '_ai')
-
-    ###################################################################
-
-    # handle user input
-    # if user_input:
-    #     st.session_state.messages.append(HumanMessage(content=user_input))
-    #     with st.spinner("Thinking..."):
-    #         response = chat(st.session_state.messages)
-    #     st.session_state.messages.append(AIMessage(content=response.content))
-
+    # display message history
+    messages = st.session_state.get('messages', [])
+    for i, msg in enumerate(messages[1:]):
+        if i % 2 == 0:
+            message(msg.content, is_user=True, key=str(i) + '_user')
+        else:
+            message(msg.content, is_user=False, key=str(i) + '_ai')
 
     # Manage context (memory)
 
