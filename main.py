@@ -13,6 +13,8 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.vectorstores import Chroma
 from langchain.chains import RetrievalQA
+from langchain.document_loaders import TextLoader
+
 
 def init():
     # Load the OpenAI API key from the environment variable
@@ -33,32 +35,23 @@ def main():
     init()
     chat = ChatOpenAI(temperature=0)
 
+    
     # the left sidebar section
     with st.sidebar:
         st.title("Your documents")
         # Upload pdf box and dispaly upload document on screen
         uploaded_file = st.file_uploader("Upload your files and click on 'Process'", accept_multiple_files = True)
-        # Extract text and chunk and vectorize it
-        # Store vectors (vectorstore)
-
-
-    # the right main section
-    # Display header on screen
-    st.header("Chat with Multiple Documents 🤖")
-    # Capture User's prompt
-    user_input = st.text_input("Ask a question about your documents: ", key="user_input", 
-                               placeholder="Can you give me a short summary?", disabled=not uploaded_file)
-    
-    # initialize message history
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            SystemMessage(content="You are a helpful assistant.")
-        ]
-
-    def generate_response(uploaded_file, user_input):
-        if uploaded_file and user_input:
-            # Extract text 
-            documents = [uploaded_file.read().decode()]
+        #create 'Process' button
+        if 'clicked' not in st.session_state:
+            st.session_state.clicked = False
+        def click_button():
+            st.session_state.clicked = True
+        st.button("Process", on_click=click_button)
+        if st.session_state.clicked:
+            # Extract text
+            documents = []
+            for f in uploaded_file:
+                documents.append(f.read().decode())
             # Break text into chunks
             text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
             texts = text_splitter.create_documents(documents)
@@ -68,16 +61,32 @@ def main():
             db = Chroma.from_documents(texts, embeddings)
             # Create retriever interface
             retriever = db.as_retriever()
+
+    # the right main section
+    # Display header on screen
+    st.header("Chat with Multiple Documents 🤖")
+    # Capture User's prompt
+    user_input = st.text_input("Ask a question about your documents: ", key="user_input", 
+                placeholder="Can you give me a short summary?", disabled=not uploaded_file)
+    
+    # initialize message history
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            SystemMessage(content="You are a helpful assistant.")
+        ]
+
+    def generate_response(uploaded_file, user_input, retriever):
+        if uploaded_file and user_input:
             # Create QA chain
             qa = RetrievalQA.from_chain_type(llm=chat, chain_type='stuff', retriever=retriever)
             return qa.run(user_input)
 
-    if user_input:
+    if user_input and st.session_state.clicked:
         prompt = HumanMessage(content=user_input)
         st.session_state.messages.append(prompt)
         with st.spinner("Thinking..."):
             #response = chat(st.session_state.messages)
-            response = generate_response(uploaded_file, user_input)
+            response = generate_response(uploaded_file, user_input, retriever)
         # st.session_state.messages.append(AIMessage(content=response.content))
         st.session_state.messages.append(AIMessage(content=response))
 
