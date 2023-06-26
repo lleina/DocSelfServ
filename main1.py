@@ -93,14 +93,14 @@ def main():
             with st.spinner("Thinking..."):
                 response = generate_response(uploaded_file, user_input, create_retriever(uploaded_file))
             st.session_state.messages.append(AIMessage(content=response))
-
-    # display message history
-    messages = st.session_state.get('messages', [])
-    for i, msg in enumerate(messages[1:]):
-        if i % 2 == 0:
-            message(msg.content, is_user=True, key=str(i) + '_user')
-        else:
-            message(msg.content, is_user=False, key=str(i) + '_ai')
+    with st.container():
+        # display message history
+        messages = st.session_state.get('messages', [])
+        for i, msg in enumerate(messages[1:]):
+            if i % 2 == 0:
+                message(msg.content, is_user=True, key=str(i) + '_user')
+            else:
+                message(msg.content, is_user=False, key=str(i) + '_ai')
     # Manage context (memory)
 
 
