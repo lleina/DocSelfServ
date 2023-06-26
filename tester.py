@@ -67,11 +67,11 @@ def main():
     # Display header on screen
     st.header("Chat with Multiple Documents 🤖")
     # Capture User's prompt
-    def clear_text():
-        st.session_state["text"] = ""
-    user_input = st.text_input("Ask a question about your documents: ", key="user_input", 
-                placeholder="Can you give me a short summary?", disabled=not uploaded_file)
-    
+    with st.form("prompt form", clear_on_submit=True):
+        user_input = st.text_input("Ask a question about your documents: ", key="user_input", 
+                    placeholder="Can you give me a short summary?", disabled=not uploaded_file)
+        st.form_submit_button("Enter", use_container_width=True)
+
     
     # initialize message history
     if "messages" not in st.session_state:
@@ -88,6 +88,8 @@ def main():
     if user_input and st.session_state.clicked:
             prompt = HumanMessage(content=user_input)
             st.session_state.messages.append(prompt)
+            # clears input after user enters prompt
+
             with st.spinner("Thinking..."):
                 response = generate_response(uploaded_file, user_input, create_retriever(uploaded_file))
             st.session_state.messages.append(AIMessage(content=response))
