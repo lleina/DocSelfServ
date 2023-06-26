@@ -13,7 +13,7 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.vectorstores import Chroma
 from langchain.chains import RetrievalQA
-from langchain.document_loaders import TextLoader
+
 
 
 def init():
