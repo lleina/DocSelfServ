@@ -59,7 +59,8 @@ def main():
             text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
             texts = text_splitter.create_documents(documents)
             # Store vectors (vectorstore)
-            db = Chroma.from_documents(texts, OpenAIEmbeddings())
+            embeddings = OpenAIEmbeddings()
+            db = Chroma.from_documents(texts, embeddings)
             # Create retriever interface
             return db.as_retriever()
 

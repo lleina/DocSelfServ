@@ -13,7 +13,7 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.vectorstores import Chroma
 from langchain.chains import RetrievalQA
-
+import pypdf
 
 
 def init():
@@ -27,12 +27,42 @@ def init():
     else:
         print("OPENAI_API_KEY is set")
 
-    
+def pdf_to_pages(file):
+	"extract text (pages) from pdf file"
+	pages = []
+	pdf = pypdf.PdfReader(file)
+	for p in range(len(pdf.pages)):
+		page = pdf.pages[p]
+		text = page.extract_text()
+		pages += [text]
+	return pages
+
+def create_retriever(uploaded_file):
+            # Extract text
+            documents = []
+            for f in uploaded_file:
+                documents.append(f.read().decode())
+            # Break text into chunks
+            text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+            texts = text_splitter.create_documents(documents)
+            # Store vectors (vectorstore)
+            embeddings = OpenAIEmbeddings()
+            db = Chroma.from_documents(texts, embeddings)
+            # Create retriever interface
+            return db.as_retriever()
+
+def generate_response(chat, uploaded_file, user_input, retriever):
+    if uploaded_file and user_input:
+        # Create QA chain
+        qa = RetrievalQA.from_chain_type(llm=chat, chain_type='stuff', retriever=retriever)
+        return qa.run(user_input)
+
 # main fn
 def main():
     # load API Key
     init()
     chat = ChatOpenAI(temperature=0)
+
     # the left sidebar section
     with st.sidebar:
         st.title("Your documents")
@@ -50,19 +80,6 @@ def main():
         #create 'Process' button
         st.button("Process", on_click=click_button)
 
-        def create_retriever(uploaded_file):
-            # Extract text
-            documents = []
-            for f in uploaded_file:
-                documents.append(f.read().decode())
-            # Break text into chunks
-            text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-            texts = text_splitter.create_documents(documents)
-            # Store vectors (vectorstore)
-            db = Chroma.from_documents(texts, OpenAIEmbeddings())
-            # Create retriever interface
-            return db.as_retriever()
-
     # the right main section
     # Display header on screen
     st.header("Chat with Multiple Documents 🤖")
@@ -79,19 +96,13 @@ def main():
             SystemMessage(content="You are a helpful assistant.")
         ]
 
-    def generate_response(uploaded_file, user_input, retriever):
-        if uploaded_file and user_input:
-            # Create QA chain
-            qa = RetrievalQA.from_chain_type(llm=chat, chain_type='stuff', retriever=retriever)
-            return qa.run(user_input)
-
     if user_input and st.session_state.clicked:
             prompt = HumanMessage(content=user_input)
             st.session_state.messages.append(prompt)
             # clears input after user enters prompt
 
             with st.spinner("Thinking..."):
-                response = generate_response(uploaded_file, user_input, create_retriever(uploaded_file))
+                response = generate_response(chat, uploaded_file, user_input, create_retriever(uploaded_file))
             st.session_state.messages.append(AIMessage(content=response))
     with st.container():
         # display message history
@@ -102,8 +113,6 @@ def main():
             else:
                 message(msg.content, is_user=False, key=str(i) + '_ai')
     # Manage context (memory)
-
-
 
 
 if __name__ == '__main__':
