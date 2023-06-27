@@ -15,7 +15,7 @@ from langchain.vectorstores import Chroma
 from langchain.chains import RetrievalQA
 import pypdf
 import docx2txt
-import docx
+import variables
 
 def init():
     """Sets API Key"""
@@ -85,12 +85,17 @@ def main():
             st.session_state.clicked = False
         def click_button():
             st.session_state.clicked = True
+            variables.num_files = len(uploaded_file)
+            print(variables.num_files)
         def unclick_button():
             st.session_state.clicked = False
-
+            variables.num_files = len(uploaded_file)
+            print(variables.num_files)
         # Upload pdf box and display upload document on screen
-        uploaded_file = st.file_uploader("Upload your files and click on 'Process'", accept_multiple_files = True, on_change=unclick_button)
-        #create 'Process' button
+        uploaded_file = st.file_uploader("Upload your files and click on 'Process'", 
+                                         accept_multiple_files = True, on_change=unclick_button)
+
+        #create 'Process' buttond
         st.button("Process", on_click=click_button)
 
     # the right main section
@@ -98,8 +103,10 @@ def main():
 
     # Capture User's prompt
     with st.form("prompt form", clear_on_submit=True):
+        print(variables.num_files)
         user_input = st.text_input("Ask a question about your documents: ", key="user_input", 
-                    placeholder="Can you give me a short summary?", disabled=not uploaded_file)
+                    placeholder="Can you give me a short summary?", 
+                    disabled=((not uploaded_file) or (variables.num_files == 0)))
         st.form_submit_button("Enter", use_container_width=True)
 
     # initialize message history
@@ -114,7 +121,8 @@ def main():
             st.session_state.messages.append(prompt)
             # clears input after user enters prompt
             with st.spinner("Thinking..."):
-                response = generate_response(chat, uploaded_file, user_input, create_retriever(uploaded_file))
+                response = generate_response(chat, uploaded_file, user_input,
+                                              create_retriever(uploaded_file))
             st.session_state.messages.append(AIMessage(content=response))
     
     # chat history
