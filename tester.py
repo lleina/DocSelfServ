@@ -2,30 +2,22 @@
 import streamlit as st
 from streamlit_chat import message
 from dotenv import load_dotenv
-import os, uuid
+import os
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import (
     SystemMessage,
     HumanMessage,
     AIMessage,
 )
-from chromadb.utils import embedding_functions
 from langchain.embeddings import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
-from langchain.chains import RetrievalQA
 from langchain.chains import ConversationChain
 from langchain.memory import ConversationBufferMemory
-from langchain.llms import OpenAI
-import chromadb
-import openai
 import pypdf
 import docx2txt
 import variables
 import json
-from bson import json_util
-from openai.embeddings_utils import get_embedding,cosine_similarity
-import numpy as np
 
 class Object:
     def toJSON(self):
@@ -93,26 +85,16 @@ def embed(uploaded_file, embeddings):
 
 def get_similar_text(db,user_input):
     # # load from local 
-    #db3 = Chroma(persist_directory="./chroma_db")
-    print("!!!!!!!!!!!!!!!!!DB.GET RIGHT BEFORE ASKING FOR!!!!!!!!!!!!!!!!!!!!!")
-    print(db.get())
-    res = db.similarity_search(user_input)
+    db3 = Chroma(persist_directory="./chroma_db", collection_name="uploaded_files", embedding_function=OpenAIEmbeddings())
+    print("!!!!!!!!!!!!!!!!!DB3.GET RIGHT BEFORE ASKING FOR!!!!!!!!!!!!!!!!!!!!!")
+    print(db3.get())
+    res = db3.similarity_search(user_input, k = 2)
     
     print("!!!!!!!!!!!!!!!!!RESSS!!!!!!!!!!!!!!!!!!!!!")
     print(res)
     
     print(res[0].page_content)
     return res[0].page_content
-
-# def generate_response(chat, uploaded_file, user_input, extracted_text):
-#     """returns a response using the retriever and user_input and chat history"""
-#     if uploaded_file and user_input:
-#         # #Create QA chain
-#         # qa = RetrievalQA.from_chain_type(llm=chat, chain_type='stuff', retriever=retriever)
-#         # return qa.run(user_input)
-#         final_prompt = ("Answer the question based on the information below. Information:"
-#                         +extracted_text+"and the question:"+user_input)
-        
         
 # main fn
 def main():
@@ -120,10 +102,7 @@ def main():
     init()
     chat = ChatOpenAI(temperature=0)
     embeddings=OpenAIEmbeddings()
-    # openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-    #     api_key=os.getenv("OPENAI_API_KEY"),
-    #     model_name="text-embedding-ada-002"
-    # )
+
     # the left sidebar section
     with st.sidebar:
         st.title("Your documents")
@@ -147,7 +126,7 @@ def main():
         print(variables.num_files)
         user_input = st.text_input("Ask a question about your documents: ", key="user_input", 
                     placeholder="Can you give me a short summary?")
-        st.form_submit_button("Enter", use_container_width=True)
+        enter_button = st.form_submit_button("Enter", use_container_width=True)
 
     # initialize message history
     if "messages" not in st.session_state:
@@ -161,12 +140,9 @@ def main():
         verbose = True,
         memory = ConversationBufferMemory()
     )
-    # extracted_messages = conversation.chat_memory.messages()
-    # ingest_to_db = messages_to_dict(extracted_messages)
-
 
     # generate GPT's response 
-    if user_input:
+    if user_input and enter_button:
             prompt = HumanMessage(content=user_input)
             st.session_state.messages.append(prompt)
             # clears input after user enters prompt
