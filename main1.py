@@ -55,7 +55,7 @@ def create_retriever(uploaded_file):
         else:
             print("unsupported file type! :(")
     # Break text into chunks
-    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     texts = text_splitter.create_documents(documents)
     # Store vectors (vectorstore)
     embeddings = OpenAIEmbeddings()
