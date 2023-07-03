@@ -19,6 +19,8 @@ import docx2txt
 import variables
 import json
 
+embeddings=OpenAIEmbeddings()
+
 class Object:
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, 
@@ -74,7 +76,7 @@ def embed(uploaded_file, embeddings):
     print("!!!!!!!!!!!!!!!!!TEXTS!!!!!!!!!!!!!!!!!!!!!")
     print(texts)
 
-    embeddings=OpenAIEmbeddings()
+    
     db = Chroma.from_documents(texts, embeddings, collection_name="uploaded_files",
                                 persist_directory="./chroma_db")
     db.persist()
@@ -83,9 +85,9 @@ def embed(uploaded_file, embeddings):
     print(db.get())
     return db
 
-def get_similar_text(db,user_input):
+def get_similar_text(user_input):
     # # load from local 
-    db3 = Chroma(persist_directory="./chroma_db", collection_name="uploaded_files", embedding_function=OpenAIEmbeddings())
+    db3 = Chroma(persist_directory="./chroma_db", collection_name="uploaded_files", embedding_function=embeddings)
     print("!!!!!!!!!!!!!!!!!DB3.GET RIGHT BEFORE ASKING FOR!!!!!!!!!!!!!!!!!!!!!")
     print(db3.get())
     res = db3.similarity_search(user_input, k = 2)
@@ -96,12 +98,15 @@ def get_similar_text(db,user_input):
     print(res[0].page_content)
     return res[0].page_content
         
+db = Chroma(persist_directory="./chroma_db", collection_name="uploaded_files", embedding_function=OpenAIEmbeddings())
+
 # main fn
 def main():
     # load API Key
     init()
     chat = ChatOpenAI(temperature=0)
     embeddings=OpenAIEmbeddings()
+    
 
     # the left sidebar section
     with st.sidebar:
@@ -147,7 +152,7 @@ def main():
             st.session_state.messages.append(prompt)
             # clears input after user enters prompt
             with st.spinner("Thinking..."):
-                extracted_text = get_similar_text(variables.db, user_input)
+                extracted_text = get_similar_text(user_input)
                 final_prompt = ("Answer the question based on the text below and nothing else. Text: ###"
                                 +str(extracted_text)+" ### and the question: ###"+str(user_input)+" ###")
                 response = conversation.predict(input=final_prompt) 

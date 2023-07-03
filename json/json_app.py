@@ -2,12 +2,12 @@ import os
 import streamlit as st
 from json_functions import *
 from dotenv import load_dotenv
-#openai.api_key = 'bleeeeep'
+#openai.api_key = '***'
 
 
 def main():
     # Load the OpenAI API key from the environment variable
-    load_dotenv()
+    #load_dotenv()
     
     st.title("PDF Repo - Self Service")
 

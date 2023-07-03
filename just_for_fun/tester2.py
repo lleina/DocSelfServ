@@ -2,32 +2,21 @@
 import streamlit as st
 from streamlit_chat import message
 from dotenv import load_dotenv
-import os, uuid
+import os, uuid, PyPDF2
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import (
     SystemMessage,
     HumanMessage,
     AIMessage,
 )
-from chromadb.utils import embedding_functions
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
-from langchain.vectorstores import Chroma
-from langchain.chains import RetrievalQA
-from langchain.chains import ConversationChain
-from langchain.memory import ConversationBufferMemory
-from langchain.llms import OpenAI
-import chromadb
 import openai
 import pypdf
 import docx2txt
-import variables
 import json
-from bson import json_util
 from openai.embeddings_utils import get_embedding,cosine_similarity
 import numpy as np
+openai.api_key = 'bleep'
 
-    
 def init():
     """Sets API Key"""
     # Load the OpenAI API key from the environment variable
@@ -43,15 +32,15 @@ def save_uploaded_file(uploaded_file):
     with open(uploaded_file.name, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-def pdf_to_pages(file):
-	"""extract text (pages) from pdf file"""
-	pages = []
-	pdf = pypdf.PdfReader(file)
-	for p in range(len(pdf.pages)):
-		page = pdf.pages[p]
-		text = page.extract_text()
-		pages += [text]
-	return pages
+# def pdf_to_pages(file):
+# 	"""extract text (pages) from pdf file"""
+# 	pages = []
+# 	pdf = pypdf.PdfReader(file)
+# 	for p in range(len(pdf.pages)):
+# 		page = pdf.pages[p]
+# 		text = page.extract_text()
+# 		pages += [text]
+# 	return pages
 
 def extract(file_name, uploaded_file):
     """returns a retriever for the given uploaded_file 
@@ -60,29 +49,55 @@ def extract(file_name, uploaded_file):
     # Extract text
     
     #need to extract page by page rather than whole document later
-    document = []
-    if file_name.lower().endswith(".pdf"):
-        content = pdf_to_pages(uploaded_file)[0]
-    elif file_name.lower().endswith(".docx"):
-        content = docx2txt.process(uploaded_file)
-    elif file_name.lower().endswith(".txt"):
-        content = uploaded_file.read().decode()
+    # document = []
+    # if file_name.lower().endswith(".pdf"):
+    #     content = pdf_to_pages(uploaded_file)[0]
+    # elif file_name.lower().endswith(".docx"):
+    #     content = docx2txt.process(uploaded_file)
+    # elif file_name.lower().endswith(".txt"):
+    #     content = uploaded_file.read().decode()
+    #     def learn_pdf(file_path):
+    
+    content_chunks = []
+    pdf_file = open(file_name, 'rb')
+    pdf_reader = PyPDF2.PdfReader(pdf_file)
+    for page in pdf_reader.pages:
+        content = page.extract_text()
+        obj = {
+            "id": str(uuid.uuid4()),
+            "text": content,
+            "embedding": get_embedding(content,engine='text-embedding-ada-002')
+        }
+        content_chunks.append(obj)
 
-    obj = {
-    "id": str(uuid.uuid4()),
-    "text": content,
-    "embedding": get_embedding(content,engine='text-embedding-ada-002')
-    }
-    document.append(obj)
-
+    # Save the learned data into the knowledge base. The json file must alread exist with just '[' and ']' and a blank line in between.
+    # In this implementation embeddings for newly uploaded documents are appended to the json file...
     json_file_path = 'my_extracted_files.json'
     with open(json_file_path, 'r',encoding='utf-8') as f:
         data = json.load(f)
 
-    for i in document:
+    for i in content_chunks:
             data.append(i)
     with open(json_file_path, 'w',encoding='utf-8') as f:
         json.dump(data, f,ensure_ascii=False, indent=4)
+    
+    pdf_file.close()
+
+    # obj = {
+    # "id": str(uuid.uuid4()),
+    # "text": content,
+    # "embedding": get_embedding(content,engine='text-embedding-ada-002')
+    # }
+    # document.append(obj)
+
+    # json_file_path = 'my_extracted_files.json'
+    # with open(json_file_path, 'r',encoding='utf-8') as f:
+    #     data = json.load(f)
+
+    # for i in document:
+    #         data.append(i)
+    # with open(json_file_path, 'w',encoding='utf-8') as f:
+    #     json.dump(data, f,ensure_ascii=False, indent=4)
 
 def model_response(user_input):
     user_query_vector = get_embedding(user_input,engine='text-embedding-ada-002')
@@ -95,13 +110,14 @@ def model_response(user_input):
             item['similarities'] = cosine_similarity(item['embedding'], user_query_vector)
         sorted_data = sorted(data, key=lambda x: x['similarities'], reverse=True)
 
+        print(sorted_data[:5])
         context = ''
-        for item in sorted_data[:2]:
+        for item in sorted_data[:5]:
             context += item['text']
 
         myMessages = [
             {"role": "system", "content": "You're a helpful Assistant."},
-            {"role": "user", "content": "The following is a Context:\n{}\n\n Answer the following user query according to the above given context.\n\nquery: {}".format(context,user_input)}
+            {"role": "user", "content": "The following is a Context:\n{}\n\n Answer the following user QUERY according to the above given CONTENT. If the answer can not be found in the CONTENT provided, reply with exactly this sentence: Sorry, the content does not contain that information. \n\nquery: {}".format(context,user_input)}
         ]
         response = openai.ChatCompletion.create(
             model='gpt-3.5-turbo',
@@ -137,7 +153,6 @@ def main():
 
     # Capture User's prompt
     with st.form("prompt form", clear_on_submit=True):
-        print(variables.num_files)
         user_input = st.text_input("Ask a question about your documents: ", key="user_input", 
                     placeholder="Can you give me a short summary?", 
                    )
@@ -146,7 +161,7 @@ def main():
     # initialize message history
     if "messages" not in st.session_state:
         st.session_state.messages = [
-            SystemMessage(content="You are a helpful assistant.")
+            SystemMessage(content="You are a helpful assistant that only answers questions based on the documents provided and nothing else")
         ]
     
     # Manage context (memory)
