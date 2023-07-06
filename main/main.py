@@ -2,7 +2,8 @@
 import streamlit as st
 from streamlit_chat import message
 from dotenv import load_dotenv
-import os, uuid, PyPDF2
+import os, uuid, PyPDF2, webbrowser
+import aspose.words as aw
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import (
     SystemMessage,
@@ -10,12 +11,11 @@ from langchain.schema import (
     AIMessage,
 )
 import openai
-import pypdf
 import docx2txt
 import json
 from openai.embeddings_utils import get_embedding,cosine_similarity
 import numpy as np
-openai.api_key = 'bleep'
+openai.api_key = ''
 
 def init():
     """Sets API Key"""
@@ -32,17 +32,7 @@ def save_uploaded_file(uploaded_file):
     with open(uploaded_file.name, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-# def pdf_to_pages(file):
-# 	"""extract text (pages) from pdf file"""
-# 	pages = []
-# 	pdf = pypdf.PdfReader(file)
-# 	for p in range(len(pdf.pages)):
-# 		page = pdf.pages[p]
-# 		text = page.extract_text()
-# 		pages += [text]
-# 	return pages
-
-def extract(file_name, uploaded_file):
+def extract(file_name):
     """returns a retriever for the given uploaded_file 
     uploaded_file: txt, pdf, docx"""
     #TODO: doc, xls, zip
@@ -59,15 +49,23 @@ def extract(file_name, uploaded_file):
     #     def learn_pdf(file_path):
     
     content_chunks = []
+
+    #for pdf
     pdf_file = open(file_name, 'rb')
     pdf_reader = PyPDF2.PdfReader(pdf_file)
+    page_number = 1
     for page in pdf_reader.pages:
         content = page.extract_text()
+        # saves html file locally
+        # aw.Document(file_name).save(file_name+".html")
         obj = {
             "id": str(uuid.uuid4()),
             "text": content,
+            "page": page_number,
+            "file_name": file_name,
             "embedding": get_embedding(content,engine='text-embedding-ada-002')
         }
+        page_number +=1
         content_chunks.append(obj)
 
     # Save the learned data into the knowledge base. The json file must alread exist with just '[' and ']' and a blank line in between.
@@ -83,21 +81,6 @@ def extract(file_name, uploaded_file):
     
     pdf_file.close()
 
-    # obj = {
-    # "id": str(uuid.uuid4()),
-    # "text": content,
-    # "embedding": get_embedding(content,engine='text-embedding-ada-002')
-    # }
-    # document.append(obj)
-
-    # json_file_path = 'my_extracted_files.json'
-    # with open(json_file_path, 'r',encoding='utf-8') as f:
-    #     data = json.load(f)
-
-    # for i in document:
-    #         data.append(i)
-    # with open(json_file_path, 'w',encoding='utf-8') as f:
-    #     json.dump(data, f,ensure_ascii=False, indent=4)
 
 def model_response(user_input):
     user_query_vector = get_embedding(user_input,engine='text-embedding-ada-002')
@@ -110,23 +93,28 @@ def model_response(user_input):
             item['similarities'] = cosine_similarity(item['embedding'], user_query_vector)
         sorted_data = sorted(data, key=lambda x: x['similarities'], reverse=True)
 
-        print(sorted_data[:5])
+        #print(sorted_data[:1])
         context = ''
+        source = []
         for item in sorted_data[:5]:
             context += item['text']
-
+            if item['file_name'] not in source:
+                source.append(item['file_name'])
+        if context == '':
+            context = 'There is no content!'
         myMessages = [
             {"role": "system", "content": "You're a helpful Assistant."},
-            {"role": "user", "content": "The following is a Context:\n{}\n\n Answer the following user QUERY according to the above given CONTENT. If the answer can not be found in the CONTENT provided, reply with exactly this sentence: Sorry, the content does not contain that information. \n\nquery: {}".format(context,user_input)}
+            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)}
         ]
+        print({"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n. If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. \n\n Here is the CONTENT:### {}###".format(user_input,context)})
         response = openai.ChatCompletion.create(
             model='gpt-3.5-turbo',
             messages=myMessages,
             max_tokens=200,
         )
+    print(source)
+    return [response['choices'][0]['message']['content'], source]
 
-    return response['choices'][0]['message']['content']  
-        
 # main fn
 def main():
     # load API Key
@@ -146,7 +134,10 @@ def main():
                 for f in uploaded_file:
                     save_uploaded_file(f)
                     file_name = f.name
-                    extract(file_name, f)
+                    extract(file_name)
+
+    #webbrowser.open('file://' + os.path.realpath(file_name))
+
 
     # the right main section
     st.header("Chat with Multiple Documents 🤖")
@@ -161,7 +152,7 @@ def main():
     # initialize message history
     if "messages" not in st.session_state:
         st.session_state.messages = [
-            SystemMessage(content="You are a helpful assistant that only answers questions based on the documents provided and nothing else")
+            SystemMessage(content="You are a helpful assistant. ")
         ]
     
     # Manage context (memory)
@@ -172,9 +163,16 @@ def main():
         st.session_state.messages.append(prompt)
         # clears input after user enters prompt
         with st.spinner("Thinking..."):
-            response = model_response(user_input)
-        st.session_state.messages.append(AIMessage(content=str(response)))
-    
+            search_output = model_response(user_input)
+            response =  search_output[0]
+            sources = search_output[1]
+        if ("Sorry" in response):
+            st.session_state.messages.append(AIMessage(content=str(response)))
+        elif len(sources)>1:
+            st.session_state.messages.append(AIMessage(content=str(response)+" Sources: " + str(sources)))
+        else: 
+            st.session_state.messages.append(AIMessage(content=str(response)+" Source: " + str(sources)))
+
     # chat history
     with st.container():
         # display message history
