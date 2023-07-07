@@ -1,8 +1,7 @@
-# import necessary libraries
 import streamlit as st
 from streamlit_chat import message
 from dotenv import load_dotenv
-import os, uuid, PyPDF2, webbrowser
+import os, uuid, PyPDF2, json, webbrowser, openai, docx2txt, copy
 import aspose.words as aw
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import (
@@ -10,9 +9,6 @@ from langchain.schema import (
     HumanMessage,
     AIMessage,
 )
-import openai
-import docx2txt
-import json
 from openai.embeddings_utils import get_embedding,cosine_similarity
 import numpy as np
 openai.api_key = ''
@@ -70,10 +66,13 @@ def extract(file_name):
 
     # Save the learned data into the knowledge base. The json file must alread exist with just '[' and ']' and a blank line in between.
     # In this implementation embeddings for newly uploaded documents are appended to the json file...
-    json_file_path = 'my_extracted_files.json'
+
+    json_file_path = file_name+'.json'
+    with open(json_file_path, 'a+',encoding='utf-8') as f:
+        f.write("[ \n\n]")
     with open(json_file_path, 'r',encoding='utf-8') as f:
         data = json.load(f)
-
+        
     for i in content_chunks:
             data.append(i)
     with open(json_file_path, 'w',encoding='utf-8') as f:
@@ -82,37 +81,37 @@ def extract(file_name):
     pdf_file.close()
 
 
-def model_response(user_input):
+def model_response(user_input, file_names):
     user_query_vector = get_embedding(user_input,engine='text-embedding-ada-002')
-    with open('my_extracted_files.json', 'r',encoding="utf-8") as jsonfile:
-        data = json.load(jsonfile)
-        for item in data:
-            item['embeddings'] = np.array(item['embedding'])
-
-        for item in data:
-            item['similarities'] = cosine_similarity(item['embedding'], user_query_vector)
-        sorted_data = sorted(data, key=lambda x: x['similarities'], reverse=True)
-
-        #print(sorted_data[:1])
-        context = ''
-        source = []
-        for item in sorted_data[:5]:
-            context += item['text']
-            if item['file_name'] not in source:
-                source.append(item['file_name'])
-        if context == '':
+    unsorted_data = []
+    for file in file_names:
+        with open(file+'.json', 'r',encoding="utf-8") as jsonfile:
+            data = json.load(jsonfile)
+            for item in data:
+                item['embeddings'] = np.array(item['embedding'])
+            for item in data:
+                item['similarities'] = cosine_similarity(item['embedding'], user_query_vector)
+                unsorted_data.append(item)
+    sorted_data = sorted(unsorted_data, key=lambda x: x['similarities'], reverse=True)
+    context = ''
+    source = []
+    for item in sorted_data[:3]:
+        context += item['text']
+        if (item['file_name'] + " page: " + str(item['page'])) not in source:
+            source.append(item['file_name']+", page: " + str(item['page']))
+    if context == '':
             context = 'There is no content!'
-        myMessages = [
-            {"role": "system", "content": "You're a helpful Assistant."},
-            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)}
-        ]
-        print({"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n. If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. \n\n Here is the CONTENT:### {}###".format(user_input,context)})
-        response = openai.ChatCompletion.create(
-            model='gpt-3.5-turbo',
-            messages=myMessages,
-            max_tokens=200,
-        )
-    print(source)
+    myMessages = [
+        {"role": "system", "content": "You're a helpful Assistant."},
+        {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)}
+    ]
+    print({"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n. If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. \n\n Here is the CONTENT:### {}###".format(user_input,context)})
+    response = openai.ChatCompletion.create(
+        model='gpt-3.5-turbo',
+        messages=myMessages,
+        max_tokens=200,
+    )
+    #print(source)
     return [response['choices'][0]['message']['content'], source]
 
 # main fn
@@ -120,7 +119,6 @@ def main():
     # load API Key
     init()
     chat = ChatOpenAI(temperature=0)
-
     # the left sidebar section
     with st.sidebar:
         st.title("Your documents")
@@ -134,7 +132,14 @@ def main():
                 for f in uploaded_file:
                     save_uploaded_file(f)
                     file_name = f.name
-                    extract(file_name)
+                    with open('file_names1.json', 'r', encoding='utf-8') as var:
+                        file_names = json.load(var)
+                    if file_name not in file_names[0]['file_names']:
+                        file_names[0]['file_names'].append(file_name)
+                        print(file_names)
+                        with open('file_names1.json', 'w', encoding='utf-8') as var:
+                            json.dump(file_names, var ,ensure_ascii=False, indent=4)
+                        extract(file_name)
 
     #webbrowser.open('file://' + os.path.realpath(file_name))
 
@@ -163,15 +168,18 @@ def main():
         st.session_state.messages.append(prompt)
         # clears input after user enters prompt
         with st.spinner("Thinking..."):
-            search_output = model_response(user_input)
-            response =  search_output[0]
-            sources = search_output[1]
-        if ("Sorry" in response):
-            st.session_state.messages.append(AIMessage(content=str(response)))
-        elif len(sources)>1:
-            st.session_state.messages.append(AIMessage(content=str(response)+" Sources: " + str(sources)))
-        else: 
-            st.session_state.messages.append(AIMessage(content=str(response)+" Source: " + str(sources)))
+            with open('file_names1.json', 'r',encoding='utf-8') as f:
+                file_names = json.load(f)
+                files = file_names[0]['file_names']
+                search_output = model_response(user_input, files)
+                response =  search_output[0]
+                sources = search_output[1]
+                if ("Sorry" in response):
+                    st.session_state.messages.append(AIMessage(content=str(response)))
+                elif len(sources)>1:
+                    st.session_state.messages.append(AIMessage(content=str(response)+" Sources: " + str(sources)))
+                else: 
+                    st.session_state.messages.append(AIMessage(content=str(response)+" Source: " + str(sources)))
 
     # chat history
     with st.container():
