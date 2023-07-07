@@ -100,7 +100,7 @@ def model_response(user_input, file_names):
         if (item['file_name'] + " page: " + str(item['page'])) not in source:
             source.append(item['file_name']+", page: " + str(item['page']))
     if context == '':
-            context = 'There is no content!'
+            context = 'There is NO CONTENT!'
     myMessages = [
         {"role": "system", "content": "You're a helpful Assistant."},
         {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)}
@@ -122,7 +122,6 @@ def main():
     # the left sidebar section
     with st.sidebar:
         st.title("Your documents")
-
         # Upload pdf box and display upload document on screen
         uploaded_file = st.file_uploader("Upload your files and click on 'Process'", 
                                          accept_multiple_files = True)
@@ -140,6 +139,14 @@ def main():
                         with open('file_names1.json', 'w', encoding='utf-8') as var:
                             json.dump(file_names, var ,ensure_ascii=False, indent=4)
                         extract(file_name)
+
+        #create a button to represent file
+        with open('file_names1.json', 'r', encoding='utf-8') as var:
+                        file_names = json.load(var)
+        selected_files = st.multiselect('Files to Query', file_names[0]['file_names'])
+
+                        
+        
 
     #webbrowser.open('file://' + os.path.realpath(file_name))
 
@@ -168,10 +175,10 @@ def main():
         st.session_state.messages.append(prompt)
         # clears input after user enters prompt
         with st.spinner("Thinking..."):
-            with open('file_names1.json', 'r',encoding='utf-8') as f:
-                file_names = json.load(f)
-                files = file_names[0]['file_names']
-                search_output = model_response(user_input, files)
+            # with open('file_names1.json', 'r',encoding='utf-8') as f:
+            #     file_names = json.load(f)
+            #     files = file_names[0]['file_names']
+                search_output = model_response(user_input, selected_files)
                 response =  search_output[0]
                 sources = search_output[1]
                 if ("Sorry" in response):
