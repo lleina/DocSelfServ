@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_chat import message
 from dotenv import load_dotenv
-import os, uuid, PyPDF2, json, webbrowser, openai, docx2txt, copy
+import os, uuid, PyPDF2, json, webbrowser, openai, docx2txt
 import aspose.words as aw
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import (
@@ -11,10 +11,14 @@ from langchain.schema import (
 )
 from openai.embeddings_utils import get_embedding,cosine_similarity
 import numpy as np
+from docx2python import docx2python
+from langchain.chains import ConversationChain
+from langchain.memory import ConversationBufferMemory
 openai.api_key = ''
 
 def init():
     """Sets API Key"""
+    st.set_page_config(layout="wide")
     # Load the OpenAI API key from the environment variable
     load_dotenv()
     # test that the API key exists
@@ -28,44 +32,57 @@ def save_uploaded_file(uploaded_file):
     with open(uploaded_file.name, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
+def create_obj(content, page_number,file_name):
+    obj = {
+        "id": str(uuid.uuid4()),
+        "text": content,
+        "page": page_number,
+        "file_name": file_name,
+        "embedding": get_embedding(content,engine='text-embedding-ada-002')
+    }
+    return obj
+
 def extract(file_name):
-    """returns a retriever for the given uploaded_file 
-    uploaded_file: txt, pdf, docx"""
-    #TODO: doc, xls, zip
-    # Extract text
-    
-    #need to extract page by page rather than whole document later
-    # document = []
-    # if file_name.lower().endswith(".pdf"):
-    #     content = pdf_to_pages(uploaded_file)[0]
-    # elif file_name.lower().endswith(".docx"):
-    #     content = docx2txt.process(uploaded_file)
+    """returns a retriever for the given file_name
+    uploaded_file: pdf, """
+    #TODO: docx, txt, doc, xls, zip
+
+    content_chunks = []
+    #for pdf
+    page_number = 1
+    if file_name.lower().endswith(".pdf"): #make it into a function
+        pdf_file = open(file_name, 'rb')
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        for page in pdf_reader.pages:
+            content = page.extract_text()
+            # saves html file locally
+            # aw.Document(file_name).save(file_name+".html")
+            obj = create_obj(content, page_number, file_name)
+            page_number +=1
+            content_chunks.append(obj)
+        pdf_file.close()
+    elif file_name.lower().endswith(".docx"): #make it into a function
+        doc_result = docx2python(file_name)
+        para = 0
+        while para < len(doc_result.body[0][0][0]):
+            if doc_result.body[0][0][0][para] != "":
+                current_page = {}
+                current_page_paras = []
+                while doc_result.body[0][0][0][para]!= "" and para<len(doc_result.body[0][0][0]):
+                    current_page_paras.append(doc_result.body[0][0][0][para])
+                    para+=1
+                current_page["page_text"] = "\n".join(current_page_paras)
+                obj = create_obj(current_page["page_text"], page_number, file_name)
+                content_chunks.append(obj)
+                page_number+=1
+            else:
+                para+=1
     # elif file_name.lower().endswith(".txt"):
     #     content = uploaded_file.read().decode()
     #     def learn_pdf(file_path):
-    
-    content_chunks = []
-
-    #for pdf
-    pdf_file = open(file_name, 'rb')
-    pdf_reader = PyPDF2.PdfReader(pdf_file)
-    page_number = 1
-    for page in pdf_reader.pages:
-        content = page.extract_text()
-        # saves html file locally
-        # aw.Document(file_name).save(file_name+".html")
-        obj = {
-            "id": str(uuid.uuid4()),
-            "text": content,
-            "page": page_number,
-            "file_name": file_name,
-            "embedding": get_embedding(content,engine='text-embedding-ada-002')
-        }
-        page_number +=1
-        content_chunks.append(obj)
-
-    # Save the learned data into the knowledge base. The json file must alread exist with just '[' and ']' and a blank line in between.
-    # In this implementation embeddings for newly uploaded documents are appended to the json file...
+    else:
+        print("FILE TYPE IS NOT SUPPORTED! ONLY .PDF AND .DOCX")
+        return None
 
     json_file_path = file_name+'.json'
     with open(json_file_path, 'a+',encoding='utf-8') as f:
@@ -78,10 +95,10 @@ def extract(file_name):
     with open(json_file_path, 'w',encoding='utf-8') as f:
         json.dump(data, f,ensure_ascii=False, indent=4)
     
-    pdf_file.close()
 
 
-def model_response(user_input, file_names):
+
+def model_response(user_input, file_names, usegpt):
     user_query_vector = get_embedding(user_input,engine='text-embedding-ada-002')
     unsorted_data = []
     for file in file_names:
@@ -94,22 +111,40 @@ def model_response(user_input, file_names):
                 unsorted_data.append(item)
     sorted_data = sorted(unsorted_data, key=lambda x: x['similarities'], reverse=True)
     context = ''
-    source = []
+    # source = []
+    source = '\n\n Sources: \n'
     for item in sorted_data[:3]:
         context += item['text']
         if (item['file_name'] + " page: " + str(item['page'])) not in source:
-            source.append(item['file_name']+", page: " + str(item['page']))
+            # source.append(item['file_name']+", page: " + str(item['page']))
+            source = source+'- '+ item['file_name']+", page: " + str(item['page']) + "\n"
     if context == '':
             context = 'There is NO CONTENT!'
-    myMessages = [
-        {"role": "system", "content": "You're a helpful Assistant."},
-        {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)}
-    ]
-    print({"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n. If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. \n\n Here is the CONTENT:### {}###".format(user_input,context)})
+    if usegpt:
+        myMessages = [
+            {"role": "system", "content": "You're a helpful Assistant."},
+            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, go ahead and create a response using other information and make sure to cite sources at the end of your response in the following format### \n Sources: \n-SOURCE \n -SOURCE \n-SOURCE ### where SCOURCE is a variable you replace with the sources you used. If there is no source found, please say 'sources not found' ".format(user_input,context)}
+        ]
+    else: 
+        myMessages = [
+            {"role": "system", "content": "You're a helpful Assistant."},
+            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)}
+        ]
+    # print({"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n. If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. \n\n Here is the CONTENT:### {}###".format(user_input,context)})
+    
+    # # To keep memory of conversation
+    # conversation = ConversationChain(
+    #     llm = ChatOpenAI(temperature=0),
+    #     verbose = True,
+    #     memory = ConversationBufferMemory()
+    # )
+    # response = conversation.predict(input=str(myMessages)) 
+    # return [str(response), source]
+
     response = openai.ChatCompletion.create(
         model='gpt-3.5-turbo',
         messages=myMessages,
-        max_tokens=200,
+        max_tokens=500,
     )
     #print(source)
     return [response['choices'][0]['message']['content'], source]
@@ -118,7 +153,6 @@ def model_response(user_input, file_names):
 def main():
     # load API Key
     init()
-    chat = ChatOpenAI(temperature=0)
     # the left sidebar section
     with st.sidebar:
         st.title("Your documents")
@@ -144,22 +178,17 @@ def main():
         with open('file_names1.json', 'r', encoding='utf-8') as var:
                         file_names = json.load(var)
         selected_files = st.multiselect('Files to Query', file_names[0]['file_names'])
-
-                        
-        
+        usegpt = st.checkbox('ask GPT')
 
     #webbrowser.open('file://' + os.path.realpath(file_name))
-
 
     # the right main section
     st.header("Chat with Multiple Documents 🤖")
 
-    # Capture User's prompt
-    with st.form("prompt form", clear_on_submit=True):
-        user_input = st.text_input("Ask a question about your documents: ", key="user_input", 
-                    placeholder="Can you give me a short summary?", 
-                   )
-        st.form_submit_button("Enter", use_container_width=True)
+    # #Capture User's prompt
+    # with st.form("prompt form", clear_on_submit=True):
+    user_input = st.chat_input("Ask a question about your documents ")
+        # st.form_submit_button("Enter", use_container_width=True)
 
     # initialize message history
     if "messages" not in st.session_state:
@@ -167,26 +196,20 @@ def main():
             SystemMessage(content="You are a helpful assistant. ")
         ]
     
-    # Manage context (memory)
-
     # generate GPT's response 
     if user_input:
         prompt = HumanMessage(content=user_input)
         st.session_state.messages.append(prompt)
         # clears input after user enters prompt
         with st.spinner("Thinking..."):
-            # with open('file_names1.json', 'r',encoding='utf-8') as f:
-            #     file_names = json.load(f)
-            #     files = file_names[0]['file_names']
-                search_output = model_response(user_input, selected_files)
+                search_output = model_response(user_input, selected_files, usegpt)
                 response =  search_output[0]
                 sources = search_output[1]
-                if ("Sorry" in response):
+                if (("Sorry" in response) or usegpt):
                     st.session_state.messages.append(AIMessage(content=str(response)))
-                elif len(sources)>1:
-                    st.session_state.messages.append(AIMessage(content=str(response)+" Sources: " + str(sources)))
-                else: 
-                    st.session_state.messages.append(AIMessage(content=str(response)+" Source: " + str(sources)))
+                else:
+                    st.session_state.messages.append(AIMessage(content=str(response)+ str(sources)))
+                
 
     # chat history
     with st.container():
