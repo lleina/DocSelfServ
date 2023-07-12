@@ -55,17 +55,11 @@ def pdf_helper(file_name, content_chunks):
 
 def extract(file_name):
     """returns a retriever for the given file_name
-    uploaded_file: pdf, """
-    #TODO: docx, txt, doc, xls, zip
+    uploaded_file: .pdf"""
     content_chunks = []
     #for pdf
     if file_name.lower().endswith(".pdf"):
         content_chunks = pdf_helper(file_name, content_chunks)
-    elif file_name.lower().endswith(".docx"):
-        content_chunks = pdf_helper(file_name, content_chunks)
-    # elif file_name.lower().endswith(".txt"):
-    #     content = uploaded_file.read().decode()
-    #     def learn_pdf(file_path):
     else:
         print("FILE TYPE IS NOT SUPPORTED! ONLY .PDF AND .DOCX")
         return None
@@ -82,13 +76,13 @@ def extract(file_name):
         json.dump(data, f,ensure_ascii=False, indent=4)
     
 
-
-
 def model_response(user_input, file_names, usegpt):
+    """req:
+    file_names: .json and must exist in the same directory as main.py"""
     user_query_vector = get_embedding(user_input,engine='text-embedding-ada-002')
     unsorted_data = []
     for file in file_names:
-        with open(file+'.json', 'r',encoding="utf-8") as jsonfile:
+        with open(file, 'r',encoding="utf-8") as jsonfile:
             data = json.load(jsonfile)
             for item in data:
                 item['embeddings'] = np.array(item['embedding'])
@@ -140,6 +134,7 @@ def main():
     # load API Key
     init()
     # the left sidebar section
+
     with st.sidebar:
         st.title("Your documents")
         # Upload pdf box and display upload document on screen
@@ -149,28 +144,30 @@ def main():
             #create 'Process' button
             if st.button("Process"):
                 for f in uploaded_file:
-                    save_uploaded_file(f)
                     file_name = f.name
-                    with open('file_names1.json', 'r', encoding='utf-8') as var:
-                        file_names = json.load(var)
-                    if file_name not in file_names[0]['file_names']:
-                        if '.docx' in file_name:
-                            old_file_name = file_name
-                            file_name = file_name.replace(".docx", ".pdf")
-                            docx2pdf.convert(old_file_name, file_name)
-                        file_names[0]['file_names'].append(file_name)
-                        print(file_names)
-                        with open('file_names1.json', 'w', encoding='utf-8') as var:
-                            json.dump(file_names, var ,ensure_ascii=False, indent=4)
-                        extract(file_name)
+                    files = os.listdir(os.curdir)
+                    #handle update
+                    if file_name in files:
+                        if file_name.lower().endswith(".docx"):
+                            pdf_name = file_name.replace(".docx", ".pdf")
+                            os.remove(pdf_name)
+                            os.remove(file_name)
+                            os.remove(pdf_name+'.json')
+                        else: #a native pdf file
+                            os.remove(file_name)
+                            os.remove(file_name+'.json')
+                    save_uploaded_file(f)
+                    if file_name.lower().endswith(".docx"):
+                        old_file_name = file_name
+                        file_name = file_name.replace(".docx", ".pdf")
+                        docx2pdf.convert(old_file_name, file_name)
+                    extract(file_name)
 
         #create a button to represent file
-        with open('file_names1.json', 'r', encoding='utf-8') as var:
-                        file_names = json.load(var)
-        selected_files = st.multiselect('Files to Query', file_names[0]['file_names'])
+        files = os.listdir(os.curdir)
+        json_file_names = [k for k in files if '.json' in k]
+        selected_files = st.multiselect('Files to Query', json_file_names)
         usegpt = st.checkbox('ask GPT')
-
-    #webbrowser.open('file://' + os.path.realpath(file_name))
 
     # the right main section
     st.header("Chat with Multiple Documents 🤖")
@@ -200,7 +197,6 @@ def main():
                 else:
                     st.session_state.messages.append(AIMessage(content=str(response)+ str(sources)))
                 
-
     # chat history
     with st.container():
         # display message history
