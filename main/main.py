@@ -1,8 +1,8 @@
 import streamlit as st
+import os, uuid, PyPDF2, json, webbrowser, openai, docx2txt, docx2pdf
+import numpy as np
 from streamlit_chat import message
 from dotenv import load_dotenv
-import os, uuid, PyPDF2, json, webbrowser, openai, docx2txt
-import aspose.words as aw
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import (
     SystemMessage,
@@ -10,7 +10,6 @@ from langchain.schema import (
     AIMessage,
 )
 from openai.embeddings_utils import get_embedding,cosine_similarity
-import numpy as np
 from docx2python import docx2python
 from langchain.chains import ConversationChain
 from langchain.memory import ConversationBufferMemory
@@ -42,41 +41,28 @@ def create_obj(content, page_number,file_name):
     }
     return obj
 
+def pdf_helper(file_name, content_chunks):
+    pdf_file = open(file_name, 'rb')
+    pdf_reader = PyPDF2.PdfReader(pdf_file)
+    page_number = 1
+    for page in pdf_reader.pages:
+        content = page.extract_text()
+        obj = create_obj(content, page_number, file_name)
+        page_number +=1
+        content_chunks.append(obj)
+    pdf_file.close()
+    return content_chunks
+
 def extract(file_name):
     """returns a retriever for the given file_name
     uploaded_file: pdf, """
     #TODO: docx, txt, doc, xls, zip
-
     content_chunks = []
     #for pdf
-    page_number = 1
-    if file_name.lower().endswith(".pdf"): #make it into a function
-        pdf_file = open(file_name, 'rb')
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        for page in pdf_reader.pages:
-            content = page.extract_text()
-            # saves html file locally
-            # aw.Document(file_name).save(file_name+".html")
-            obj = create_obj(content, page_number, file_name)
-            page_number +=1
-            content_chunks.append(obj)
-        pdf_file.close()
-    elif file_name.lower().endswith(".docx"): #make it into a function
-        doc_result = docx2python(file_name)
-        para = 0
-        while para < len(doc_result.body[0][0][0]):
-            if doc_result.body[0][0][0][para] != "":
-                current_page = {}
-                current_page_paras = []
-                while doc_result.body[0][0][0][para]!= "" and para<len(doc_result.body[0][0][0]):
-                    current_page_paras.append(doc_result.body[0][0][0][para])
-                    para+=1
-                current_page["page_text"] = "\n".join(current_page_paras)
-                obj = create_obj(current_page["page_text"], page_number, file_name)
-                content_chunks.append(obj)
-                page_number+=1
-            else:
-                para+=1
+    if file_name.lower().endswith(".pdf"):
+        content_chunks = pdf_helper(file_name, content_chunks)
+    elif file_name.lower().endswith(".docx"):
+        content_chunks = pdf_helper(file_name, content_chunks)
     # elif file_name.lower().endswith(".txt"):
     #     content = uploaded_file.read().decode()
     #     def learn_pdf(file_path):
@@ -168,6 +154,10 @@ def main():
                     with open('file_names1.json', 'r', encoding='utf-8') as var:
                         file_names = json.load(var)
                     if file_name not in file_names[0]['file_names']:
+                        if '.docx' in file_name:
+                            old_file_name = file_name
+                            file_name = file_name.replace(".docx", ".pdf")
+                            docx2pdf.convert(old_file_name, file_name)
                         file_names[0]['file_names'].append(file_name)
                         print(file_names)
                         with open('file_names1.json', 'w', encoding='utf-8') as var:
