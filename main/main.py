@@ -1,5 +1,5 @@
 import streamlit as st
-import os, uuid, PyPDF2, json, webbrowser, openai, docx2txt, docx2pdf
+import os, uuid, PyPDF2, json, openai, docx2pdf
 import numpy as np
 from streamlit_chat import message
 from dotenv import load_dotenv
@@ -10,7 +10,7 @@ from langchain.schema import (
     AIMessage,
 )
 from openai.embeddings_utils import get_embedding,cosine_similarity
-from docx2python import docx2python
+from fpdf import FPDF
 from langchain.chains import ConversationChain
 from langchain.memory import ConversationBufferMemory
 openai.api_key = ''
@@ -131,7 +131,7 @@ def model_response(user_input, file_names, usegpt):
 
 def delete(file_name):
     """file should be the same name as the uploaded file"""
-    if (file_name in os.listdir(os.curdir)) and file_name.lower().endswith('.docx.pdf'):
+    if (file_name in os.listdir(os.curdir)) and (file_name.lower().endswith('.docx.pdf') or file_name.lower().endswith('.txt.pdf')):
         os.remove(file_name.replace(".pdf", ""))
     os.remove(file_name+'.json')
     os.remove(file_name)
@@ -163,6 +163,15 @@ def main():
                         temp_file = open(file_name, "w")
                         temp_file.close()
                         docx2pdf.convert(old_file_name, file_name)
+                    elif file_name.lower().endswith(".txt"):
+                        new_pdf = FPDF()
+                        new_pdf.add_page()
+                        new_pdf.set_font("Arial", size=12)
+                        fi = open(file_name, "r")
+                        for x in fi:
+                            new_pdf.cell(200, 10, txt=x, ln = 1, align = 'L')
+                        file_name = file_name + ".pdf"
+                        new_pdf.output(file_name)
                     extract(file_name)
 
         #represent current files to query/delete
@@ -179,10 +188,12 @@ def main():
                     for f in delete_files:
                         print(f)
                         delete(f.replace('.json', ''))
-        selected_files = st.multiselect('Files to Query', json_file_names)
+        selected_files = st.multiselect('Files to Query', json_file_names, key = "selected")
         colcheck1, colcheck2 = st.columns([2,1.1])
         with colcheck1:
             query_all = st.checkbox('Query all documents')
+            if query_all:
+                selected_files = st.multiselect('Files to Query', options = json_file_names, default = json_file_names, key = "selected2")
         with colcheck2:
             usegpt = st.checkbox('Ask GPT')
 
