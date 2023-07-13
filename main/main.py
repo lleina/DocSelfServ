@@ -129,6 +129,13 @@ def model_response(user_input, file_names, usegpt):
     #print(source)
     return [response['choices'][0]['message']['content'], source]
 
+def delete(file_name):
+    """file should be the same name as the uploaded file"""
+    if (file_name in os.listdir(os.curdir)) and file_name.lower().endswith('.docx.pdf'):
+        os.remove(file_name.replace(".pdf", ""))
+    os.remove(file_name+'.json')
+    os.remove(file_name)
+
 # main fn
 def main():
     # load API Key
@@ -142,32 +149,42 @@ def main():
                                          accept_multiple_files = True)
         if uploaded_file !=None:
             #create 'Process' button
-            if st.button("Process"):
+            if st.button("Process", use_container_width=True):
                 for f in uploaded_file:
                     file_name = f.name
                     files = os.listdir(os.curdir)
                     #handle update
                     if file_name in files:
-                        if file_name.lower().endswith(".docx"):
-                            pdf_name = file_name.replace(".docx", ".pdf")
-                            os.remove(pdf_name)
-                            os.remove(file_name)
-                            os.remove(pdf_name+'.json')
-                        else: #a native pdf file
-                            os.remove(file_name)
-                            os.remove(file_name+'.json')
+                        delete(file_name)
                     save_uploaded_file(f)
                     if file_name.lower().endswith(".docx"):
                         old_file_name = file_name
-                        file_name = file_name.replace(".docx", ".pdf")
+                        file_name = file_name+".pdf"
+                        temp_file = open(file_name, "w")
+                        temp_file.close()
                         docx2pdf.convert(old_file_name, file_name)
                     extract(file_name)
 
-        #create a button to represent file
+        #represent current files to query/delete
         files = os.listdir(os.curdir)
         json_file_names = [k for k in files if '.json' in k]
+        with st.container():
+            st.write('Files to remove')
+            
+            colrem1, colrem2 = st.columns([3,1.3])
+            with colrem1:
+                delete_files = st.multiselect('Files to Remove', json_file_names, label_visibility="collapsed")
+            with colrem2:
+                if st.button('Remove', use_container_width=True):
+                    for f in delete_files:
+                        print(f)
+                        delete(f.replace('.json', ''))
         selected_files = st.multiselect('Files to Query', json_file_names)
-        usegpt = st.checkbox('ask GPT')
+        colcheck1, colcheck2 = st.columns([2,1.1])
+        with colcheck1:
+            query_all = st.checkbox('Query all documents')
+        with colcheck2:
+            usegpt = st.checkbox('Ask GPT')
 
     # the right main section
     st.header("Chat with Multiple Documents 🤖")
