@@ -119,7 +119,7 @@ def model_response(user_input, file_names, usegpt):
     if usegpt:
         myMessages = [
             {"role": "system", "content": "You're a helpful Assistant."},
-            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, go ahead and create a response using other information and make sure to cite sources at the end of your response in the following format### \n Sources: \n-SOURCE \n -SOURCE \n-SOURCE ### where SCOURCE is a variable you replace with the sources you used. If there is no source found, please say 'sources not found' ".format(user_input,context)}
+            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, go ahead and create a response using other information and make sure to cite sources at the end of your response in the following format### \n Sources: \n-SOURCE \n -SOURCE \n-SOURCE ### where SOURCE is a variable you replace with the sources you used. If there is no source found, please say 'sources not found' ".format(user_input,context)}
         ]
     else: 
         myMessages = [

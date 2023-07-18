@@ -1,6 +1,7 @@
 import streamlit as st
 import os, uuid, PyPDF2, json, openai, docx2pdf
 import numpy as np
+import pandas as pd
 from streamlit_chat import message
 from dotenv import load_dotenv
 from langchain.chat_models import ChatOpenAI
@@ -92,19 +93,27 @@ def extract(file_name):
         json.dump(data, f,ensure_ascii=False, indent=4)
     
 
-def model_response(user_input, file_names, usegpt):
+def model_response(user_input, file_names, usegpt, pages):
     """req:
-    file_names: .json and must exist in the same directory as main.py"""
+    -file_names: .json and must exist in the same directory as main.py
+    -pages:  dictionary where the key is a string that must exist in file_names
+        and the value is a list of tuples representing valid page numbers of key
+        e.g. { doc1 : [(1,1), (3,4)], doc2 :[(1,4)]} would capture pages 1, 3, 4 of doc1
+        and pages 1 through 4 of doc 2. Tuples can overlap in number and don't have to be
+        sorted chronologically"""
     user_query_vector = get_embedding(user_input,engine='text-embedding-ada-002')
     unsorted_data = []
     for file in file_names:
         with open(file, 'r',encoding="utf-8") as jsonfile:
             data = json.load(jsonfile)
+            query_pages = pages[file]
             for item in data:
                 item['embeddings'] = np.array(item['embedding'])
             for item in data:
-                item['similarities'] = cosine_similarity(item['embedding'], user_query_vector)
-                unsorted_data.append(item)
+                for page in query_pages:
+                    if item['page']>= page[0] and item['page']<= page[1]:
+                        item['similarities'] = cosine_similarity(item['embedding'], user_query_vector)
+                        unsorted_data.append(item)
     sorted_data = sorted(unsorted_data, key=lambda x: x['similarities'], reverse=True)
     context = ''
     # source = []
@@ -119,7 +128,7 @@ def model_response(user_input, file_names, usegpt):
     if usegpt:
         myMessages = [
             {"role": "system", "content": "You're a helpful Assistant."},
-            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, go ahead and create a response using other information and make sure to cite sources at the end of your response in the following format### \n Sources: \n-SOURCE \n -SOURCE \n-SOURCE ### where SCOURCE is a variable you replace with the sources you used. If there is no source found, please say 'sources not found' ".format(user_input,context)}
+            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, go ahead and create a response using other information and make sure to cite sources at the end of your response in the following format### \n Sources: \n-SOURCE \n -SOURCE \n-SOURCE ### where SOURCE is a variable you replace with the sources you used. If there is no source found, please say 'sources not found' ".format(user_input,context)}
         ]
     else: 
         myMessages = [
@@ -189,15 +198,73 @@ def main():
                     for f in delete_files:
                         print(f)
                         delete(f.replace('.json', ''))
-        selected_files = st.multiselect('Files to Query', json_file_names, key = "selected")
+
+        # selected_files = st.multiselect('Files to Query', json_file_names, key = "selected")
+        # print(selected_files)
+
+        #getting the number of pages in each json (rather than pdf)
+        max_page = []
+        for file in json_file_names:
+            curr_page = 0
+            with open(file, 'r',encoding="utf-8") as jsonfile:
+                data = json.load(jsonfile)
+                for item in data:
+                    item['embeddings'] = np.array(item['embedding'])
+                for item in data:
+                    curr_page = max(curr_page, item['page'])
+            max_page.append(curr_page)
+        #print(max_page)
+
+        df = pd.DataFrame()
+        df['UploadedFiles'] = json_file_names
+        df['FirstPage'] = 1
+        df['LastPage'] = max_page
+        df['Selected'] = [False]*len(json_file_names)
+
+        edited_df = st.data_editor(
+            df,
+            column_config={
+                'UploadedFiles': "Uploaded Files",
+                "FirstPage": st.column_config.NumberColumn(
+                    "First Page",
+                    help = "select the starting page to query",
+                    min_value = 1,
+                    max_value = max(max_page),
+                    step = 1,
+                    format = "%d"
+                ),
+                "LastPage": st.column_config.NumberColumn(
+                    "Last Page",
+                    help = "select the last page to query. MUST be >= First Page",
+                    min_value = 1,
+                    max_value = max(max_page),
+                    step = 1,
+                    format = "%d"
+                ),
+            "Selected" : "Is selected",
+            },
+            hide_index = True,
+        )
+
+        selected_files = edited_df.loc[edited_df["Selected"] == True]["UploadedFiles"].tolist()
+        selected_first_page = edited_df.loc[edited_df["Selected"] == True]["FirstPage"].tolist()
+        selected_last_page = edited_df.loc[edited_df["Selected"] == True]["LastPage"].tolist()
+        page_dict = {}
+        i = 0
+        while i<len(selected_files):
+            page_dict[selected_files[i]]=[(selected_first_page[i], selected_last_page[i])]
+            i= i+1
         print(selected_files)
-        colcheck1, colcheck2 = st.columns([2,1.1])
-        # with colcheck1:
-            # query_all = st.checkbox('Query all documents')
-            # if query_all:
-            #     selected_files = st.multiselect('Files to Query', options = json_file_names, default = json_file_names, key = "selected2")
-        with colcheck2:
-            usegpt = st.checkbox('Ask GPT')
+        print(page_dict)
+
+        # colcheck1, colcheck2 = st.columns([2,1.1])
+
+        # # with colcheck1:
+        #     # query_all = st.checkbox('Query all documents')
+        #     # if query_all:
+        #     #     selected_files = st.multiselect('Files to Query', options = json_file_names, default = json_file_names, key = "selected2")
+        # with colcheck2:
+        usegpt = st.checkbox('Ask GPT')
 
     # the right main section
     st.header("Chat with Multiple Documents 🤖")
@@ -219,7 +286,7 @@ def main():
         st.session_state.messages.append(prompt)
         # clears input after user enters prompt
         with st.spinner("Thinking..."):
-                search_output = model_response(user_input, selected_files, usegpt)
+                search_output = model_response(user_input, selected_files, usegpt,page_dict)
                 response =  search_output[0]
                 sources = search_output[1]
                 if (("Sorry" in response) or usegpt):
