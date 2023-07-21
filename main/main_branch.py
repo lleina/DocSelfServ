@@ -214,57 +214,52 @@ def main():
                     curr_page = max(curr_page, item['page'])
             max_page.append(curr_page)
         #print(max_page)
+        tab1, tab2 = st.tabs(["text based queries", "data based queries"])
+        with tab1:
+            df = pd.DataFrame()
+            df['UploadedFiles'] = json_file_names
+            df['FirstPage'] = 1
+            df['LastPage'] = max_page
+            df['Selected'] = [False]*len(json_file_names)
 
-        df = pd.DataFrame()
-        df['UploadedFiles'] = json_file_names
-        df['FirstPage'] = 1
-        df['LastPage'] = max_page
-        df['Selected'] = [False]*len(json_file_names)
+            edited_df = st.data_editor(
+                df,
+                column_config={
+                    'UploadedFiles': "Uploaded Files",
+                    "FirstPage": st.column_config.NumberColumn(
+                        "First Page",
+                        help = "select the starting page to query",
+                        min_value = 1,
+                        max_value = max(max_page),
+                        step = 1,
+                        format = "%d"
+                    ),
+                    "LastPage": st.column_config.NumberColumn(
+                        "Last Page",
+                        help = "select the last page to query. MUST be >= First Page",
+                        min_value = 1,
+                        max_value = max(max_page),
+                        step = 1,
+                        format = "%d"
+                    ),
+                "Selected" : "Is selected",
+                },
+                hide_index = True,
+            )
 
-        edited_df = st.data_editor(
-            df,
-            column_config={
-                'UploadedFiles': "Uploaded Files",
-                "FirstPage": st.column_config.NumberColumn(
-                    "First Page",
-                    help = "select the starting page to query",
-                    min_value = 1,
-                    max_value = max(max_page),
-                    step = 1,
-                    format = "%d"
-                ),
-                "LastPage": st.column_config.NumberColumn(
-                    "Last Page",
-                    help = "select the last page to query. MUST be >= First Page",
-                    min_value = 1,
-                    max_value = max(max_page),
-                    step = 1,
-                    format = "%d"
-                ),
-            "Selected" : "Is selected",
-            },
-            hide_index = True,
-        )
-
-        selected_files = edited_df.loc[edited_df["Selected"] == True]["UploadedFiles"].tolist()
-        selected_first_page = edited_df.loc[edited_df["Selected"] == True]["FirstPage"].tolist()
-        selected_last_page = edited_df.loc[edited_df["Selected"] == True]["LastPage"].tolist()
-        page_dict = {}
-        i = 0
-        while i<len(selected_files):
-            page_dict[selected_files[i]]=[(selected_first_page[i], selected_last_page[i])]
-            i= i+1
-        print(selected_files)
-        print(page_dict)
-
-        # colcheck1, colcheck2 = st.columns([2,1.1])
-
-        # # with colcheck1:
-        #     # query_all = st.checkbox('Query all documents')
-        #     # if query_all:
-        #     #     selected_files = st.multiselect('Files to Query', options = json_file_names, default = json_file_names, key = "selected2")
-        # with colcheck2:
-        usegpt = st.checkbox('Ask GPT')
+            selected_files = edited_df.loc[edited_df["Selected"] == True]["UploadedFiles"].tolist()
+            selected_first_page = edited_df.loc[edited_df["Selected"] == True]["FirstPage"].tolist()
+            selected_last_page = edited_df.loc[edited_df["Selected"] == True]["LastPage"].tolist()
+            page_dict = {}
+            i = 0
+            while i<len(selected_files):
+                page_dict[selected_files[i]]=[(selected_first_page[i], selected_last_page[i])]
+                i= i+1
+            print(selected_files)
+            print(page_dict)
+            usegpt = st.checkbox('Ask GPT')
+        with tab2:
+            selected_data = st.multiselect('CSV to Query', json_file_names, key = "data")
 
     # the right main section
     st.header("Chat with Multiple Documents 🤖")

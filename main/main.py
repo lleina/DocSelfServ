@@ -13,6 +13,9 @@ from openai.embeddings_utils import get_embedding,cosine_similarity
 from fpdf import FPDF
 from langchain.chains import ConversationChain
 from langchain.memory import ConversationBufferMemory
+from langchain.llms import OpenAI
+from langchain.agents import create_csv_agent
+from langchain.agents.agent_types import AgentType
 openai.api_key = ''
 
 def init():
@@ -90,7 +93,6 @@ def extract(file_name):
             data.append(i)
     with open(json_file_path, 'w',encoding='utf-8') as f:
         json.dump(data, f,ensure_ascii=False, indent=4)
-    
 
 def model_response(user_input, file_names, usegpt):
     """req:
@@ -147,9 +149,10 @@ def model_response(user_input, file_names, usegpt):
 
 def delete(file_name):
     """file should be the same name as the uploaded file"""
-    if (file_name in os.listdir(os.curdir)) and (file_name.lower().endswith('.docx.pdf') or file_name.lower().endswith('.txt.pdf')):
-        os.remove(file_name.replace(".pdf", ""))
-    os.remove(file_name+'.json')
+    if not file_name.lower().endswith(".csv"):
+        if (file_name in os.listdir(os.curdir)) and (file_name.lower().endswith('.docx.pdf') or file_name.lower().endswith('.txt.pdf')):
+            os.remove(file_name.replace(".pdf", ""))
+        os.remove(file_name+'.json')
     os.remove(file_name)
 
 # main fn
@@ -157,7 +160,7 @@ def main():
     # load API Key
     init()
     # the left sidebar section
-
+    llm = OpenAI(temperature=0)
     with st.sidebar:
         st.title("Your documents")
         # Upload pdf box and display upload document on screen
@@ -173,31 +176,56 @@ def main():
                     if file_name in files:
                         delete(file_name)
                     save_uploaded_file(f)
-                    extract(file_name)
+                    if not file_name.lower().endswith(".csv"):
+                        extract(file_name)
 
         #represent current files to query/delete
         files = os.listdir(os.curdir)
         json_file_names = [k for k in files if '.json' in k]
+        csv_file_names = [l for l in files if '.csv' in l]
+        remove_file_names = json_file_names
+        for c in csv_file_names:
+            remove_file_names.append(c)
         with st.container():
             st.write('Files to remove')
-            
             colrem1, colrem2 = st.columns([3,1.3])
             with colrem1:
-                delete_files = st.multiselect('Files to Remove', json_file_names, label_visibility="collapsed")
+                delete_files = st.multiselect('Files to Remove', remove_file_names, label_visibility="collapsed")
             with colrem2:
                 if st.button('Remove', use_container_width=True):
                     for f in delete_files:
                         print(f)
                         delete(f.replace('.json', ''))
-        selected_files = st.multiselect('Files to Query', json_file_names, key = "selected")
-        print(selected_files)
-        colcheck1, colcheck2 = st.columns([2,1.1])
-        # with colcheck1:
-            # query_all = st.checkbox('Query all documents')
-            # if query_all:
-            #     selected_files = st.multiselect('Files to Query', options = json_file_names, default = json_file_names, key = "selected2")
-        with colcheck2:
-            usegpt = st.checkbox('Ask GPT')
+        tab1, tab2 = st.tabs(["text based queries", "data based queries"])
+
+        with tab2:
+            selected_csv= st.selectbox('CSV to Query', csv_file_names, key = "data")
+            agent = create_csv_agent(
+                ChatOpenAI(temperature=0, model="gpt-3.5-turbo-0613"),
+                # llm,
+                selected_csv,
+                verbose=True,
+                agent_type=AgentType.OPENAI_FUNCTIONS,
+            )
+            # agent = create_csv_agent(
+            #     ChatOpenAI(temperature=0, model="gpt-3.5-turbo-0613"),
+            #     selected_csv,
+            #     verbose=True,
+            #     agent_type=AgentType.OPENAI_FUNCTIONS,
+            #     return_intermediate_steps=True
+            # )
+            usecsv = st.checkbox('Ask CSV files only')
+        with tab1:
+            selected_files = st.multiselect('Files to Query', json_file_names, disabled=usecsv, key = "selected")
+            print(selected_files)
+            colcheck1, colcheck2 = st.columns([2,1.1])
+            # with colcheck1:
+                # query_all = st.checkbox('Query all documents')
+                # if query_all:
+                #     selected_files = st.multiselect('Files to Query', options = json_file_names, default = json_file_names, key = "selected2")
+            with colcheck2:
+                usegpt = st.checkbox('Ask GPT')
+
 
     # the right main section
     st.header("Chat with Multiple Documents 🤖")
@@ -219,10 +247,18 @@ def main():
         st.session_state.messages.append(prompt)
         # clears input after user enters prompt
         with st.spinner("Thinking..."):
-                search_output = model_response(user_input, selected_files, usegpt)
-                response =  search_output[0]
-                sources = search_output[1]
-                if (("Sorry" in response) or usegpt):
+                if usecsv:
+                    response = agent.run(user_input)
+                    # response = agent({"input":user_input})
+                    # st.write(response["intermediate_steps"])
+                    # st.write(response["output"])
+                    
+                else:
+                    search_output = model_response(user_input, selected_files, usegpt)
+                    response =  search_output[0]
+                    sources = search_output[1]
+
+                if (("Sorry" in response) or usegpt or usecsv):
                     st.session_state.messages.append(AIMessage(content=str(response)))
                 else:
                     st.session_state.messages.append(AIMessage(content=str(response)+ str(sources)))
