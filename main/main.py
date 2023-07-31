@@ -16,7 +16,15 @@ from langchain.memory import ConversationBufferMemory
 from langchain.llms import OpenAI
 from langchain.agents import create_csv_agent
 from langchain.agents.agent_types import AgentType
-openai.api_key = ''
+
+# from st_custom_components import st_audiorec
+import speech_recognition as sr
+import pyttsx3
+import tempfile
+from audio_recorder_streamlit import audio_recorder
+from pygame import mixer
+
+openai.api_key = 'xxx'
 
 def init():
     """Sets API Key"""
@@ -70,9 +78,11 @@ def extract(file_name):
     elif file_name.lower().endswith(".txt"):
         new_pdf = FPDF()
         new_pdf.add_page()
+        new_pdf.add_font('Arial', '', 'c:/windows/fonts/arial.ttf', uni=True)
         new_pdf.set_font("Arial", size=12)
         fi = open(file_name, "r")
         for x in fi:
+            # x = x.encode('latin-1', 'ignore')
             new_pdf.cell(200, 10, txt=x, ln = 1, align = 'L')
         file_name = file_name + ".pdf"
         new_pdf.output(file_name)
@@ -155,6 +165,47 @@ def delete(file_name):
         os.remove(file_name+'.json')
     os.remove(file_name)
 
+def SpeakText(path, text):
+    #initialize the engine
+    engine = pyttsx3.init()
+    rate = engine.getProperty('rate')
+    engine.setProperty('rate', rate-50)
+    voices = engine.getProperty('voices')
+    # print(len(voices))
+    engine.setProperty('voice', voices[0].id)
+    # engine.say(text)
+    
+    engine.save_to_file(text, path)
+    engine.runAndWait()
+
+def SpeachtoText(source):
+    # Initialize the recognizer
+    r = sr.Recognizer()
+
+    # Loop in case of errors
+    try:
+        with source as source:
+            # prepare recognizer to receive input
+            r.adjust_for_ambient_noise(source, duration=0.2)
+            print("I'm listening")
+
+            # listen for the user's inpit
+            audio2 = r.listen(source)
+            #using google to recognize audio
+            MyText = r.recognize_google(audio2)
+            print(MyText)
+            return MyText
+    except sr.RequestError as e:
+        print("Could not request results: {0}".format(e))
+
+    except sr.UnknownValueError:
+        print("unknown error occurred")
+
+def play_audio(audio_file_path):
+    mixer.init()
+    mixer.music.load(audio_file_path)
+    mixer.music.play()
+    
 # main fn
 def main():
     # load API Key
@@ -183,7 +234,9 @@ def main():
         files = os.listdir(os.curdir)
         json_file_names = [k for k in files if '.json' in k]
         csv_file_names = [l for l in files if '.csv' in l]
-        remove_file_names = json_file_names
+        remove_file_names = []
+        for j in json_file_names:
+            remove_file_names.append(j)
         for c in csv_file_names:
             remove_file_names.append(c)
         with st.container():
@@ -200,40 +253,53 @@ def main():
 
         with tab2:
             selected_csv= st.selectbox('CSV to Query', csv_file_names, key = "data")
-            agent = create_csv_agent(
-                ChatOpenAI(temperature=0, model="gpt-3.5-turbo-0613"),
-                # llm,
-                selected_csv,
-                verbose=True,
-                agent_type=AgentType.OPENAI_FUNCTIONS,
-            )
-            # agent = create_csv_agent(
-            #     ChatOpenAI(temperature=0, model="gpt-3.5-turbo-0613"),
-            #     selected_csv,
-            #     verbose=True,
-            #     agent_type=AgentType.OPENAI_FUNCTIONS,
-            #     return_intermediate_steps=True
-            # )
+            if selected_csv:
+                agent = create_csv_agent(
+                    ChatOpenAI(temperature=0, model="gpt-3.5-turbo-0613"),
+                    # llm,
+                    selected_csv,
+                    verbose=True,
+                    agent_type=AgentType.OPENAI_FUNCTIONS,
+                    return_intermediate_steps = True
+                )
             usecsv = st.checkbox('Ask CSV files only')
         with tab1:
             selected_files = st.multiselect('Files to Query', json_file_names, disabled=usecsv, key = "selected")
             print(selected_files)
-            colcheck1, colcheck2 = st.columns([2,1.1])
-            # with colcheck1:
-                # query_all = st.checkbox('Query all documents')
-                # if query_all:
-                #     selected_files = st.multiselect('Files to Query', options = json_file_names, default = json_file_names, key = "selected2")
-            with colcheck2:
-                usegpt = st.checkbox('Ask GPT')
+            usegpt = st.checkbox('Ask GPT')
 
 
     # the right main section
     st.header("Chat with Multiple Documents 🤖")
 
-    # #Capture User's prompt
-    # with st.form("prompt form", clear_on_submit=True):
-    user_input = st.chat_input("Ask a question about your documents ")
-        # st.form_submit_button("Enter", use_container_width=True)
+    user_input = ''
+
+    usespeech = st.checkbox('Use Speech to Text')
+    if usespeech:
+
+        # #different UI
+        # wav_audio_data = st_audiorec()
+
+        wav_audio_data = audio_recorder(
+            pause_threshold = 1.5,
+            text="Click to ask your question",
+            neutral_color="#FFFFFF",
+            icon_size = '2x'
+        )
+
+        if wav_audio_data is not None:
+            # # display audio data as received on the backend
+            # recording = st.audio(wav_audio_data, format='audio/wav')
+
+            with open('tempaudio1.wav', 'wb') as file:
+                file.write(wav_audio_data)
+            recording = sr.AudioFile('./tempaudio1.wav')
+            print(recording)
+            text = SpeachtoText(recording)
+            user_input = text
+    else:
+        # #Capture User's prompt from chat box
+        user_input = st.chat_input("Ask a question about your documents ")
 
     # initialize message history
     if "messages" not in st.session_state:
@@ -248,15 +314,27 @@ def main():
         # clears input after user enters prompt
         with st.spinner("Thinking..."):
                 if usecsv:
-                    response = agent.run(user_input)
-                    # response = agent({"input":user_input})
-                    # st.write(response["intermediate_steps"])
-                    # st.write(response["output"])
-                    
+                    response_dict = agent({"input": user_input})
+                    response = response_dict['output']
+                    steps = response_dict["intermediate_steps"]
+                    i1 = str(steps[0][0]).find('Invoking')
+                    i2 = str(steps[0][0]).find('\\n', i1)
+                    process = str(steps[0][0])[i1:i2]
+                    response = "Steps to answer:\n" + process + "\n\n" + "Final answer: \n" + response
+
                 else:
                     search_output = model_response(user_input, selected_files, usegpt)
                     response =  search_output[0]
                     sources = search_output[1]
+                    if usespeech:
+                        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                                audio_file_path = f.name
+                        try:
+                            SpeakText(audio_file_path, response)
+                            play_audio(audio_file_path)
+                            # os.remove(audio_file_path)
+                        except Exception as e:
+                            st.error(f"Error: Failed to generate or play audio - {e}")
 
                 if (("Sorry" in response) or usegpt or usecsv):
                     st.session_state.messages.append(AIMessage(content=str(response)))
