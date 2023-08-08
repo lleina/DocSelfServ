@@ -16,7 +16,7 @@ from langchain.chains import ConversationChain
 from langchain.memory import ConversationBufferMemory
 from langchain.agents import create_csv_agent
 from langchain.agents.agent_types import AgentType
-openai.api_key = 'xxx'
+openai.api_key = 'leina'
 
 def init():
     """Sets API Key"""

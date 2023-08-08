@@ -24,7 +24,8 @@ import tempfile
 from audio_recorder_streamlit import audio_recorder
 from pygame import mixer
 
-openai.api_key = 'xxx'
+openai.api_key = 'leina'
+
 
 def init():
     """Sets API Key"""
@@ -317,11 +318,11 @@ def main():
                     response_dict = agent({"input": user_input})
                     response = response_dict['output']
                     steps = response_dict["intermediate_steps"]
-                    i1 = str(steps[0][0]).find('Invoking')
-                    i2 = str(steps[0][0]).find('\\n', i1)
-                    process = str(steps[0][0])[i1:i2]
-                    response = "Steps to answer:\n" + process + "\n\n" + "Final answer: \n" + response
-
+                    if steps!=[]:
+                        i1 = str(steps[0][0]).find('Invoking')
+                        i2 = str(steps[0][0]).find('\\n', i1)
+                        process = str(steps[0][0])[i1:i2]
+                        response = "Steps to answer:\n" + process + "\n\n" + "Final answer: \n" + response
                 else:
                     search_output = model_response(user_input, selected_files, usegpt)
                     response =  search_output[0]
