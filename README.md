@@ -8,13 +8,13 @@ To get started:
   3. create a requirements.txt by doing [pip install pipreqs]
   4. run [pip install -r requirements.txt]
     may require additional pip installs including:
-        [pip install matplotlib
-        pip install plotly
-        pip install scipy
-        pip install scikit-learn
-        pip install speechrecognition
-        pip install tabulate
-        sudo apt install ffmpeg]
+        [pip install matplotlib]
+        [pip install plotly]
+        [pip install scipy]
+        [pip install scikit-learn]
+        [pip install speechrecognition]
+        [pip install tabulate]
+        [sudo apt install ffmpeg]
   To access main application, go to main directory
   then run [streamlit run main.py]
 
