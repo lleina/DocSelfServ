@@ -15,6 +15,7 @@ To get started:
         [pip install speechrecognition]
         [pip install tabulate]
         [sudo apt install ffmpeg]
+  5. Create a .env folder with OPENAI_API_KEY='your_openai_key' inside of it
   To access main application, go to main directory
   then run [streamlit run main.py]
 
@@ -32,7 +33,7 @@ To get started:
     -Generate translations of multi-paged documents
     -translate to english, spanish, chinese, german, french, italian, hindi, korean
     
-  Note: speech may or may not work depending on OS. Translation works on Windows primarily if contain path to Arial font is c:/windows/fonts/arial.ttf
+  Note: speech may or may not work depending on OS. Translation works on Windows primarily if contain path to Arial font is c:/windows/fonts/arial.ttf. 
     
 
   
