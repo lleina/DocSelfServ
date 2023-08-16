@@ -6,7 +6,9 @@ from langchain.schema import (
 )
 from fpdf import FPDF
 
-openai.api_key = 'leina'
+### Does not call openAI Concurrently. May take longer to translate the file.
+
+openai.api_key = 'your_openai_key' #replace with your openai API key
 
 def init():
     """Sets API Key"""

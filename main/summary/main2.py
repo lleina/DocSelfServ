@@ -21,8 +21,11 @@ import pyttsx3
 import tempfile
 from audio_recorder_streamlit import audio_recorder
 from pygame import mixer
+from num2words import num2words
 
 openai.api_key = 'your_openai_key' #replace with your openai API key
+
+### Creates a summary as a meta data. But doesn't actually do anything with that meta data.
 
 
 def init():
@@ -38,42 +41,41 @@ def init():
         print("OPENAI_API_KEY is set")
 
 def save_uploaded_file(uploaded_file):
-    """
-    uploaded_file : file type
-    Saves the uploaded_file
-    """
     with open(uploaded_file.name, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
+def create_summary(content):
+    message = [
+            {"role": "system", "content": "You're great at giving summaries."},
+            {"role": "user", "content": "Summarize the following text using 15 words or less: {} ".format(content)}
+        ]
+    summary = openai.ChatCompletion.create(
+    model='gpt-3.5-turbo',
+    messages=message,
+    max_tokens=500,
+    )
+    return summary
+
 def create_obj(content, page_number,file_name):
-    """
-    content : str
-    page_number : int
-    file_name : str
-    returns a record containing an 'id', 'text' from the content, 'page'
-    as the page number, 'file_name', and 'embedding' as an embedding of content
-    """
+    summary = create_summary(content)['choices'][0]['message']['content']
     obj = {
         "id": str(uuid.uuid4()),
         "text": content,
         "page": page_number,
         "file_name": file_name,
+        "summary" : summary,
         "embedding": get_embedding(content,engine='text-embedding-ada-002')
     }
     return obj
 
 def pdf_helper(file_name, content_chunks):
-    """
-    file_name : str representing a .pdf file in the directory
-    content_chunks : str
-    Creates chunks of content from a .pdf file
-    """
     pdf_file = open(file_name, 'rb')
     pdf_reader = PyPDF2.PdfReader(pdf_file)
     page_number = 1
     for page in pdf_reader.pages:
         content = page.extract_text()
-        content = "page " + str(page_number) + " contains the following text: " + content
+        page_num_word = num2words(page_number)
+        content = "{page number " + str(page_num_word) + ", "+ str(page_number) + " contains the following content: @" + content + " @ That is the end of page " + str(page_number) + ", "+ str(page_num_word) + "}"
         obj = create_obj(content, page_number, file_name)
         page_number +=1
         content_chunks.append(obj)
@@ -81,20 +83,16 @@ def pdf_helper(file_name, content_chunks):
     return content_chunks
 
 def extract(file_name):
-    """
-    file_name: str representing the name of either a .docx, .txt, or .pdf file in the directory
-    Creates a json file that contains a recrods of each string of text of size chunk_size.
-    The records will include 'id', 'text', 'page', 'file_name', and 'embedding'
-    """
+    """returns a retriever for the given file_name
+    uploaded_file: .pdf"""
     content_chunks = []
-    #for docx
+    #for pdf
     if file_name.lower().endswith(".docx"):
         old_file_name = file_name
         file_name = file_name+".pdf"
         temp_file = open(file_name, "w")
         temp_file.close()
         docx2pdf.convert(old_file_name, file_name)
-    #for txt
     elif file_name.lower().endswith(".txt"):
         new_pdf = FPDF()
         new_pdf.add_page()
@@ -106,11 +104,11 @@ def extract(file_name):
             new_pdf.cell(200, 10, txt=x, ln = 1, align = 'L')
         file_name = file_name + ".pdf"
         new_pdf.output(file_name)
-    #for pdf
+
     if file_name.lower().endswith(".pdf"):
         content_chunks = pdf_helper(file_name, content_chunks)
     else:
-        print("FILE TYPE IS NOT SUPPORTED! ONLY .PDF, .DOCX, AND .TXT")
+        print("FILE TYPE IS NOT SUPPORTED! ONLY .PDF AND .DOCX")
         return None
 
     json_file_path = file_name+'.json'
@@ -125,17 +123,8 @@ def extract(file_name):
         json.dump(data, f,ensure_ascii=False, indent=4)
 
 def model_response(user_input, file_names, usegpt):
-    """
-    user_input : str representing user's query
-    file_names: str represeing .json file that exists in the same directory as main.py
-    usegpt : bool
-    returns a list where first element represents the response to user's query using the top 5 most
-    similar chunks of data found from file_names. Will return a response outside of file_names
-    if usegpt is True. The second element contains a list of top 5 sources found
-
-    Limitations: does not taken into account for token limit. Check main_token.py to see how that is
-    taken care of.
-    """
+    """req:
+    file_names: .json and must exist in the same directory as main.py"""
     user_query_vector = get_embedding(user_input,engine='text-embedding-ada-002')
     unsorted_data = []
     for file in file_names:
@@ -148,39 +137,37 @@ def model_response(user_input, file_names, usegpt):
                 unsorted_data.append(item)
     sorted_data = sorted(unsorted_data, key=lambda x: x['similarities'], reverse=True)
     context = ''
+    # source = []
     source = '\n\n Sources: \n'
-    for item in sorted_data[:5]:
+    for item in sorted_data[:2]:
         context += item['text']+";   "
         if (item['file_name'] + " page: " + str(item['page'])) not in source:
+            # source.append(item['file_name']+", page: " + str(item['page']))
             source = source+'- '+ item['file_name']+", page: " + str(item['page']) + "\n"
     if context == '':
             context = 'There is NO CONTENT!'
     if usegpt:
         myMessages = [
-            {"role": "system", "content": "You're a helpful Assistant."},
-            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, go ahead and create a response using other information and make sure to cite sources at the end of your response in the following format### \n Sources: \n-SOURCE \n -SOURCE \n-SOURCE ### where SOURCE is a variable you replace with the sources you used. If there is no source found, please say 'sources not found' ".format(user_input,context)}
+            {"role": "system", "content": "You will answer a query based on the given page numbers and its accompanying content."},
+            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the page by page CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, go ahead and create a response using other information and make sure to cite sources at the end of your response in the following format### \n Sources: \n-SOURCE \n -SOURCE \n-SOURCE ### where SOURCE is a variable you replace with the sources you used. If there is no source found, please say 'sources not found' ".format(user_input,context)}
         ]
     else: 
         myMessages = [
-            {"role": "system", "content": "You're a helpful Assistant."},
-            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)}
+            {"role": "system", "content": "You will answer a query based only on the given page numbers and its accompanying content."},
+            {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the page by page CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)}
         ]
-    print({"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)})
+    print({"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the page by page CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)})
 
     response = openai.ChatCompletion.create(
         model='gpt-3.5-turbo',
         messages=myMessages,
         max_tokens=500,
     )
+    #print(source)
     return [response['choices'][0]['message']['content'], source]
 
 def delete(file_name):
-    """
-    file_name: str representing the name of the uploaded file
-
-    Deletes file_name and other files created by file_name in the case where
-    there's another upload of the same file_name.
-    """
+    """file should be the same name as the uploaded file"""
     if not file_name.lower().endswith(".csv"):
         if (file_name in os.listdir(os.curdir)) and (file_name.lower().endswith('.docx.pdf') or file_name.lower().endswith('.txt.pdf')):
             os.remove(file_name.replace(".pdf", ""))
@@ -188,13 +175,6 @@ def delete(file_name):
     os.remove(file_name)
 
 def SpeakText(path, text):
-    """
-    path : str representing path to the created audio file
-    text : str representing text the audio will be generated for
-    Creates data for a .wav audio to be stored in 'path'.
-
-    Note: Probably only works for english at the moment. Haven't tried other languages.
-    """
     #initialize the engine
     engine = pyttsx3.init()
     rate = engine.getProperty('rate')
@@ -207,19 +187,17 @@ def SpeakText(path, text):
     engine.save_to_file(text, path)
     engine.runAndWait()
 
-def SpeechtoText(source):
-    """
-    source : Audiofile
-    returns text transcribed from the speech. Else if exception is caught,
-    will print 'Could not request results' or 'unknown error occurred'.
-    """
+def SpeachtoText(source):
     # Initialize the recognizer
     r = sr.Recognizer()
+
+    # Loop in case of errors
     try:
         with source as source:
             # prepare recognizer to receive input
             r.adjust_for_ambient_noise(source, duration=0.2)
             print("I'm listening")
+
             # listen for the user's inpit
             audio2 = r.listen(source)
             #using google to recognize audio
@@ -233,10 +211,6 @@ def SpeechtoText(source):
         print("unknown error occurred")
 
 def play_audio(audio_file_path):
-    """
-    audio_file_path : str representing .wav file in same directory
-    Plays audio from audio_file_path
-    """
     mixer.init()
     mixer.music.load(audio_file_path)
     mixer.music.play()
@@ -246,6 +220,7 @@ def main():
     # load API Key
     init()
     # the left sidebar section
+    llm = OpenAI(temperature=0)
     with st.sidebar:
         st.title("Your documents")
         # Upload pdf box and display upload document on screen
@@ -273,7 +248,6 @@ def main():
             remove_file_names.append(j)
         for c in csv_file_names:
             remove_file_names.append(c)
-        # Delete UI
         with st.container():
             st.write('Files to remove')
             colrem1, colrem2 = st.columns([3,1.3])
@@ -311,25 +285,29 @@ def main():
 
     usespeech = st.checkbox('Use Speech to Text')
     if usespeech:
+
         # #different UI
         # wav_audio_data = st_audiorec()
+
         wav_audio_data = audio_recorder(
             pause_threshold = 1.5,
             text="Click to ask your question",
             neutral_color="#FFFFFF",
             icon_size = '2x'
         )
+
         if wav_audio_data is not None:
             # # display audio data as received on the backend
             # recording = st.audio(wav_audio_data, format='audio/wav')
+
             with open('tempaudio1.wav', 'wb') as file:
                 file.write(wav_audio_data)
             recording = sr.AudioFile('./tempaudio1.wav')
             print(recording)
-            text = SpeechtoText(recording)
+            text = SpeachtoText(recording)
             user_input = text
     else:
-        # Capture User's prompt from chat box
+        # #Capture User's prompt from chat box
         user_input = st.chat_input("Ask a question about your documents ")
 
     # initialize message history
@@ -345,7 +323,6 @@ def main():
         # clears input after user enters prompt
         with st.spinner("Thinking..."):
                 if usecsv:
-                    # constructs response to csv related questions
                     response_dict = agent({"input": user_input})
                     response = response_dict['output']
                     steps = response_dict["intermediate_steps"]
@@ -364,6 +341,7 @@ def main():
                         try:
                             SpeakText(audio_file_path, response)
                             play_audio(audio_file_path)
+                            # os.remove(audio_file_path)
                         except Exception as e:
                             st.error(f"Error: Failed to generate or play audio - {e}")
 

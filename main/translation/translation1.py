@@ -1,14 +1,18 @@
 import streamlit as st
 import os, uuid, PyPDF2, json, openai, docx2pdf
 from dotenv import load_dotenv
-from langchain.schema import (
-    SystemMessage,
-)
 from fpdf import FPDF
+from pdf2docx import Converter
 from openai_multi_client import OpenAIMultiOrderedClient
 
+# README
+# GOALS: Translates documents into multiple languages using OpenAI Api Key.
+# REQUIRES a .env folder with OPENAI_API_KEY=key inside of it. Also requires
+# Several .ttf files including MALGUN.TTF, NotoSansDevangari-Regular.ttf, 
+# unifont-15.0.06.ttf in the same folder as this python code.
+# TO RUN: type >streamlit run translation1.py
 
-openai.api_key = 'leina'
+openai.api_key = 'your_openai_key' #replace with your openai API key
 
 def init():
     """Sets API Key"""
@@ -23,6 +27,10 @@ def init():
         print("OPENAI_API_KEY is set")
 
 def save_uploaded_file(uploaded_file):
+    """
+    uploaded_file : file type
+    Saves the uploaded_file
+    """
     with open(uploaded_file.name, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
@@ -35,10 +43,14 @@ def create_obj(content , file_name):
     return obj
 
 def splitter(content, chunk_size):
-    """Content is 1 page of information as a string. 
-    Returns a list of chunks of the page. Each chunk is chunk_size characters +/- 200 characters.
-    if true, need to append to next chunk. """
-
+    """
+    content : str
+    chunk_size : int 
+    Returns a list where the first element is a bool representing if the last chunk needs to be
+    appended to the next string of content to be split.
+    the second element is a list of strings representing chunks of the content.
+    Each chunk is chunk_size characters +/- 200 characters.
+    """
     total_char = len(content)
     start_idx = 0
     end_idx = start_idx + chunk_size
@@ -67,16 +79,17 @@ def splitter(content, chunk_size):
             if (end_idx+200+1>=total_char):
                 chunks[0]=True
         end_idx = end_idx+chunk_size
-
-
-        
     return chunks
 
 def pdf_helper(file_name, content_chunks, chunk_size):
-    """chunk_size is the number of characters per each chunk"""
+    """
+    file_name : str representing a .pdf file in the directory
+    content_chunks : str
+    chunk_size : int
+    Creates chunks of content from a .pdf file
+    """
     pdf_file = open(file_name, 'rb')
     pdf_reader = PyPDF2.PdfReader(pdf_file)
-    # page_number = 1
     content_prev = ''
     for page in pdf_reader.pages:
         content = content_prev+' '+ page.extract_text()
@@ -87,15 +100,17 @@ def pdf_helper(file_name, content_chunks, chunk_size):
             content_prev = ''
         for chunk in split[1]:
             obj = create_obj(chunk, file_name)
-            # page_number +=1
             content_chunks.append(obj)
     pdf_file.close()
     return content_chunks
 
 def extract(file_name, chunk_size):
-    """returns a retriever for the given file_name
-    uploaded_file: .pdf
-    chunk_size is the number of characters per each chunk"""
+    """
+    file_name: str representing the name of either a .docx, .txt, or .pdf file in the directory
+    chunk_size: int representing the characters in each chunk of text
+    Creates a json file that contains a recrods of each string of text of size chunk_size.
+    The records will include 'id', 'text', and 'file_name'
+    """
     content_chunks = []
     #for pdf
     if file_name.lower().endswith(".docx"):
@@ -109,7 +124,7 @@ def extract(file_name, chunk_size):
         new_pdf.add_page()
         new_pdf.add_font('Arial', '', 'c:/windows/fonts/arial.ttf', uni=True)
         new_pdf.set_font("Arial", size=12)
-        fi = open(file_name, "r")
+        fi = open(file_name, "r", encoding="utf8")
         for x in fi:
             # x = x.encode('latin-1', 'ignore')
             new_pdf.cell(200, 10, txt=x, ln = 1, align = 'L')
@@ -134,7 +149,11 @@ def extract(file_name, chunk_size):
         json.dump(data, f,ensure_ascii=False, indent=4)
 
 def translate_helper(api, dat, lang_option):
-    print(type(lang_option))
+    """
+    api : OpenAIMultiOrderedClient
+    dat : deserialized json like object
+    lang_option: str
+    """
     for item in dat:
         text_in = (item['text'])
         api.request(data={
@@ -145,52 +164,112 @@ def translate_helper(api, dat, lang_option):
         }, metadata={'text': text_in})
 
 def translate(file_name, lang_option):
-    """req:
-    file_names: .json and must exist in the same directory as main.py"""
+    """
+    file_name: str representing the name of the uploaded file.
+    lang_option: str
+    Requires file_name.json to exist in the same directory.
+    Returns a str that is the translated version of all the text in file_name.json
+    """
     text_out = ''
     with open(file_name+'.json', 'r',encoding="utf-8") as jsonfile:
         dat = json.load(jsonfile)
         req = len(dat)
-
         api = OpenAIMultiOrderedClient(
         endpoint="chats",
-        concurrency = req,
+        concurrency = req, #var determines how many concurrent calls at once !!!IMPORTANT!!!!
         data_template={"model": "gpt-3.5-turbo"}
         )
         api.run_request_function(translate_helper, api, dat, lang_option)
 
     for result in api:
-        # text_in = result.metadata['text']
         response = result.response['choices'][0]['message']['content']
         text_out = text_out+ " " + response
+
     print(text_out)
     return text_out
 
 
-def delete(file_name):
-    """file should be the same name as the uploaded file"""
-    os.remove(file_name)
-    os.remove(file_name+'.json')
+def delete(file_name, lang_option):
+    """
+    file_name: str representing the name of the uploaded file
+    lang_option: str that's in the list of languages for translation
 
-def create_pdf(file_name, text, lang_option):
-    """Creates a pdf where each line is ~90 characters long, Arial size 11 font, left align"""
+    Deletes file_name and other files created by file_name in the case where
+    there's another upload of the same file_name.
+    """
+    os.remove(file_name)
+    trans_pdf = file_name_creator(file_name, lang_option, False)
+    trans_docx = trans_pdf[:len(trans_pdf)-4]+'.docx'
+    files = os.listdir(os.curdir)
+    if trans_pdf in files:
+        os.remove(trans_pdf)
+    if trans_docx in files:
+        os.remove(trans_docx)
+    if file_name.lower().endswith(".pdf"):
+        if file_name+'.json' in files:
+            os.remove(file_name+'.json')
+    else:
+        if file_name+'.pdf'in files:
+            os.remove(file_name+'.pdf')
+        if file_name+'.pdf.json' in files:
+            os.remove(file_name+'.pdf.json')
+
+def file_name_creator(file_name, lang_option, exists):
+    """pdf name creator for a translated file. 
+    Returns file_name_langoption.pdf if exists is False, otherwise
+    it returns file_name_langoption_new.pdf if exists is True"""
+    if exists:
+        return file_name + "_" + lang_option + 'new' + ".pdf"
+    else:
+        return file_name + "_" + lang_option + ".pdf"
+    
+def create_pdf_helper(new_pdf, font_name, ttf_file, font_size):
+    """
+    new_pdf : FPDF
+    font_name : str
+    ttf_file : str
+    font_size: int
+    """
+    new_pdf.add_font(font_name, '', ttf_file, uni=True)
+    new_pdf.set_font(font_name, size=font_size)
+
+def create_pdf_helper2(lang_option, font_size):
     new_pdf = FPDF()
     new_pdf.add_page()
     if (lang_option == "Chinese (Simplified)") or (lang_option == "Hindi"):
-        new_pdf.add_font('unifont', '', './unifont-15.0.06.ttf', uni=True)
-        new_pdf.set_font("unifont", size=11)
+        font_name = 'unifont'
+        ttf_file = './unifont-15.0.06.ttf'
+        create_pdf_helper(new_pdf, font_name, ttf_file, font_size)
         line_size = 45
-        print("CHINESE/HINDI DOC!!!")
     elif lang_option== "Korean":
-        new_pdf.add_font('malgun', '', './MALGUN.TTF', uni=True)
-        new_pdf.set_font("malgun", size=11)
+        font_name = 'malgun'
+        ttf_file = './MALGUN.TTF'
+        create_pdf_helper(new_pdf, font_name, ttf_file, font_size)
         line_size = 55
-        print("KOREAN DOC!!!")
-    else: #english/spanish
-        new_pdf.add_font('Arial', '', 'c:/windows/fonts/arial.ttf', uni=True)
-        new_pdf.set_font("Arial", size=11)
+    else: #english/spanish/french/german/italian
+        font_name = 'Arial'
+        ttf_file = 'c:/windows/fonts/arial.ttf' #if not using windows, may need to import Arial into folder
+        create_pdf_helper(new_pdf, font_name, ttf_file, font_size)
         line_size = 95
-        print("ENGLISH/LATIN/FRENCH/GERMAN")
+    return [line_size, new_pdf]
+
+def create_pdf(file_name, text, lang_option, font_size):
+    """
+    Params
+    file_name: string of file name
+    text: a string that will appear in output pdf
+    lang_option: the language of the text. Has to be what's supported in the streamlit selectbox
+    font_size: an int. 11 is recommended
+    Requires ./unifont-15.0.06.ttf, ./MALGUN.TTF, in current directory and c:/windows/fonts/arial.ttf.
+    --------------------------------------------------------------------------------------------------
+    Creates a pdf with left align text. font and number of characters per line
+    vary based on language. If desire different font, import the .ttf font into current folder and
+    change font_name and ttf_file accordingly based on language.
+    Returns a pdf file name generated by file_name_creator
+    """
+    new_pdf_created = create_pdf_helper2(lang_option, font_size)
+    line_size = new_pdf_created[0]
+    new_pdf = new_pdf_created[1]
     x=0
     while x<len(text):
         if x+line_size<len(text):
@@ -207,60 +286,87 @@ def create_pdf(file_name, text, lang_option):
         else:
             new_pdf.cell(200, 10, txt=text[x:], ln = 1, align = 'L')
             x=x+line_size+1
-    file_name = file_name + lang_option + ".pdf"
+
+    file_name =  file_name_creator(file_name, lang_option, False)
     files = os.listdir(os.curdir)
     if file_name in files:
-        file_name = file_name + lang_option + 'new' + ".pdf"
+        file_name = file_name_creator(file_name, lang_option, True)
     new_pdf.output(file_name)
     return file_name
+
+def docx_creator(trans_file_name):
+    """
+    Requires trans_file_name : string name of a .pdf file in the same folder
+    Creates a .docx file from a .pdf file
+    """
+    docx = Converter(trans_file_name)
+    docx_name = trans_file_name[:len(trans_file_name)-4]+'.docx'
+    docx.convert(docx_name, start=0, end=None)
+    docx.close()
+    return docx_name
 
 # main fn
 def main():
     # load API Key
     init()
 
-    st.title("Translate Multiple Documents 🤖")
+    st.title("Translate Documents")
     # Upload pdf box and display upload document on screen
-    uploaded_file = st.file_uploader("Upload your files and click on 'Process'", 
+    uploaded_file = st.file_uploader("Upload your file and click on 'Translate'. Supports .pdf, .docx, .txt", 
                                         accept_multiple_files = True)
     if uploaded_file !=None:
         # create select language
         lang_option = st.selectbox(
             "Translate to:",
-            ("English", "Spanish", "Chinese (Simplified)", "French", "German", "Korean", "Hindi")
+            ("English", "Spanish", "Chinese (Simplified)", "French", "German", "Korean", "Hindi", "Italian")
+        )
+        output_format = st.selectbox(
+            "Output file format:",
+            ("PDF", "DOCX")
         )
 
-        #create 'Process' button
+        #vars to create PDF
+        chunk_size = 5000
+        font_size = 11
+
+        #create 'Translate' button
         if st.button("Translate", use_container_width=True):
             for f in uploaded_file:
                 file_name = f.name
                 files = os.listdir(os.curdir)
-                #handle update
+                #handles update
                 if file_name in files:
-                    delete(file_name)
+                    delete(file_name, lang_option)
                 save_uploaded_file(f)
                 if not file_name.lower().endswith(".csv"):
-                    chunk_size = 5000
                     extract(file_name, chunk_size)
-                    t = translate(file_name, lang_option)
-                    print(t)
-                    trans_file_name = create_pdf(file_name, t, lang_option)
-                    with open(trans_file_name, "rb") as fi:
-                        st.download_button(
-                            label = "download: " + trans_file_name,
-                            data = fi,
-                            file_name = trans_file_name,
-                            mime = "application/pdf"
-                        )
-
-    # initialize message history
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            SystemMessage(content="You are a helpful assistant. ")
-        ]
-    
-    # generate GPT's response 
-
+                    if not file_name.lower().endswith(".pdf"):
+                        t = translate(file_name+'.pdf', lang_option)
+                    else:
+                        t = translate(file_name, lang_option)
+                    # print(t)
+                    trans_file_name = create_pdf(file_name, t, lang_option, font_size)
+                    if "DOCX" in output_format:
+                        docx_name = docx_creator(trans_file_name)
+                        #creates a download button for docx
+                        with open(docx_name, "rb") as fi:
+                            st.download_button(
+                                label = "download: " + docx_name,
+                                data = fi,
+                                file_name = docx_name,
+                                mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            )
+                    if "PDF" in output_format:
+                        #creates a download button for pdf
+                        with open(trans_file_name, "rb") as fi:
+                            st.download_button(
+                                label = "download: " + trans_file_name,
+                                data = fi,
+                                file_name = trans_file_name,
+                                mime = "application/pdf"
+                            )
+                else:
+                    st.write("Doesn't translate .csv")
 
 if __name__ == '__main__':
     main()

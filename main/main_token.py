@@ -11,9 +11,12 @@ from langchain.schema import (
 )
 from openai.embeddings_utils import get_embedding,cosine_similarity
 from fpdf import FPDF
+from langchain.chains import ConversationChain
+from langchain.memory import ConversationBufferMemory
 from langchain.llms import OpenAI
 from langchain.agents import create_csv_agent
 from langchain.agents.agent_types import AgentType
+import tiktoken
 
 # from st_custom_components import st_audiorec
 import speech_recognition as sr
@@ -38,21 +41,10 @@ def init():
         print("OPENAI_API_KEY is set")
 
 def save_uploaded_file(uploaded_file):
-    """
-    uploaded_file : file type
-    Saves the uploaded_file
-    """
     with open(uploaded_file.name, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
 def create_obj(content, page_number,file_name):
-    """
-    content : str
-    page_number : int
-    file_name : str
-    returns a record containing an 'id', 'text' from the content, 'page'
-    as the page number, 'file_name', and 'embedding' as an embedding of content
-    """
     obj = {
         "id": str(uuid.uuid4()),
         "text": content,
@@ -62,39 +54,89 @@ def create_obj(content, page_number,file_name):
     }
     return obj
 
-def pdf_helper(file_name, content_chunks):
-    """
-    file_name : str representing a .pdf file in the directory
-    content_chunks : str
-    Creates chunks of content from a .pdf file
-    """
+def get_token(strng, encoding_name):
+    """encoding_name for gpt-3.5-turbo, text_embedding-ada-002 and gpt-4 is cl100k_base."""
+    encoding = tiktoken.get_encoding(encoding_name)
+    num_tokens = len(encoding.encode(strng))
+    print(num_tokens)
+    return num_tokens
+
+def splitter(content, encoding_name):
+    """Content is 1 page of information as a string. 
+    Returns a list of chunks of the page. Each chunk is chunk_size characters +/- 200 characters.
+    if true, need to append to next chunk. """
+
+    eng_max = 3500 #num char max passed in per chunk for english
+    kan_max = 438
+    buffer = 75 
+
+    num_tok = get_token(content[:24], encoding_name)
+    if num_tok > 15: #probably kanji
+        chunk_size = kan_max-buffer
+    else: #regular english
+        chunk_size = eng_max-buffer
+
+    total_char = len(content)
+    start_idx = 0
+    end_idx = start_idx + chunk_size
+    chunks = [False, []]
+
+    if end_idx>=total_char:
+        chunks[1].append(content[start_idx:])
+
+    while end_idx<total_char:
+        if end_idx+buffer+1<total_char:
+            found = False
+            for c in ['.', ';', '!', '?']:
+                if found == False:
+                    k = content[start_idx:end_idx+200].rfind(c) + start_idx
+                    if k!=-1 and content[start_idx:k+1]!='':
+                        chunks[1].append(content[start_idx:k+1])
+                        start_idx = k+1
+                        found = True
+            if (found == False) and content[start_idx:end_idx+1]!='':
+                chunks[1].append(content[start_idx:end_idx+1])
+                start_idx = end_idx+1
+
+        else:
+            chunks[1].append(content[start_idx:])
+            start_idx = end_idx+1
+            if (end_idx+200+1>=total_char):
+                chunks[0]=True
+        end_idx = end_idx+chunk_size
+    return chunks
+
+def pdf_helper(file_name, content_chunks, encoding_name):
+    """chunk_size is the number of characters per each chunk"""
     pdf_file = open(file_name, 'rb')
     pdf_reader = PyPDF2.PdfReader(pdf_file)
     page_number = 1
+    content_prev = ''
     for page in pdf_reader.pages:
-        content = page.extract_text()
-        content = "page " + str(page_number) + " contains the following text: " + content
-        obj = create_obj(content, page_number, file_name)
-        page_number +=1
-        content_chunks.append(obj)
+        content = content_prev+' '+ page.extract_text()
+        split = splitter(content, encoding_name)
+        if split[0]==True:
+            content_prev=split[1][len(split[1])-1]
+        else:
+            content_prev = ''
+        for chunk in split[1]:
+            obj = create_obj(chunk, page_number, file_name)
+            page_number +=1
+            content_chunks.append(obj)
     pdf_file.close()
     return content_chunks
 
-def extract(file_name):
-    """
-    file_name: str representing the name of either a .docx, .txt, or .pdf file in the directory
-    Creates a json file that contains a recrods of each string of text of size chunk_size.
-    The records will include 'id', 'text', 'page', 'file_name', and 'embedding'
-    """
+def extract(file_name, encoding_name):
+    """returns a retriever for the given file_name
+    uploaded_file: .pdf"""
     content_chunks = []
-    #for docx
+    #for pdf
     if file_name.lower().endswith(".docx"):
         old_file_name = file_name
         file_name = file_name+".pdf"
         temp_file = open(file_name, "w")
         temp_file.close()
         docx2pdf.convert(old_file_name, file_name)
-    #for txt
     elif file_name.lower().endswith(".txt"):
         new_pdf = FPDF()
         new_pdf.add_page()
@@ -106,11 +148,11 @@ def extract(file_name):
             new_pdf.cell(200, 10, txt=x, ln = 1, align = 'L')
         file_name = file_name + ".pdf"
         new_pdf.output(file_name)
-    #for pdf
+
     if file_name.lower().endswith(".pdf"):
-        content_chunks = pdf_helper(file_name, content_chunks)
+        content_chunks = pdf_helper(file_name, content_chunks, encoding_name)
     else:
-        print("FILE TYPE IS NOT SUPPORTED! ONLY .PDF, .DOCX, AND .TXT")
+        print("FILE TYPE IS NOT SUPPORTED! ONLY .PDF AND .DOCX")
         return None
 
     json_file_path = file_name+'.json'
@@ -125,17 +167,8 @@ def extract(file_name):
         json.dump(data, f,ensure_ascii=False, indent=4)
 
 def model_response(user_input, file_names, usegpt):
-    """
-    user_input : str representing user's query
-    file_names: str represeing .json file that exists in the same directory as main.py
-    usegpt : bool
-    returns a list where first element represents the response to user's query using the top 5 most
-    similar chunks of data found from file_names. Will return a response outside of file_names
-    if usegpt is True. The second element contains a list of top 5 sources found
-
-    Limitations: does not taken into account for token limit. Check main_token.py to see how that is
-    taken care of.
-    """
+    """req:
+    file_names: .json and must exist in the same directory as main.py"""
     user_query_vector = get_embedding(user_input,engine='text-embedding-ada-002')
     unsorted_data = []
     for file in file_names:
@@ -148,10 +181,12 @@ def model_response(user_input, file_names, usegpt):
                 unsorted_data.append(item)
     sorted_data = sorted(unsorted_data, key=lambda x: x['similarities'], reverse=True)
     context = ''
+    # source = []
     source = '\n\n Sources: \n'
-    for item in sorted_data[:5]:
+    for item in sorted_data[:4]:
         context += item['text']+";   "
         if (item['file_name'] + " page: " + str(item['page'])) not in source:
+            # source.append(item['file_name']+", page: " + str(item['page']))
             source = source+'- '+ item['file_name']+", page: " + str(item['page']) + "\n"
     if context == '':
             context = 'There is NO CONTENT!'
@@ -166,21 +201,26 @@ def model_response(user_input, file_names, usegpt):
             {"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)}
         ]
     print({"role": "user", "content": "Answer the following QUERY:\n ### {} ###\n\n using the CONTENT:\n### {}### \n\n If the answer isn't found in the CONTENT provided, always respond with exactly this sentence: Sorry, the content does not contain that information. ".format(user_input,context)})
+    
+    # # To keep memory of conversation
+    # conversation = ConversationChain(
+    #     llm = ChatOpenAI(temperature=0),
+    #     verbose = True,
+    #     memory = ConversationBufferMemory()
+    # )
+    # response = conversation.predict(input=str(myMessages)) 
+    # return [str(response), source]
 
     response = openai.ChatCompletion.create(
         model='gpt-3.5-turbo',
         messages=myMessages,
         max_tokens=500,
     )
+    #print(source)
     return [response['choices'][0]['message']['content'], source]
 
 def delete(file_name):
-    """
-    file_name: str representing the name of the uploaded file
-
-    Deletes file_name and other files created by file_name in the case where
-    there's another upload of the same file_name.
-    """
+    """file should be the same name as the uploaded file"""
     if not file_name.lower().endswith(".csv"):
         if (file_name in os.listdir(os.curdir)) and (file_name.lower().endswith('.docx.pdf') or file_name.lower().endswith('.txt.pdf')):
             os.remove(file_name.replace(".pdf", ""))
@@ -188,13 +228,6 @@ def delete(file_name):
     os.remove(file_name)
 
 def SpeakText(path, text):
-    """
-    path : str representing path to the created audio file
-    text : str representing text the audio will be generated for
-    Creates data for a .wav audio to be stored in 'path'.
-
-    Note: Probably only works for english at the moment. Haven't tried other languages.
-    """
     #initialize the engine
     engine = pyttsx3.init()
     rate = engine.getProperty('rate')
@@ -207,19 +240,17 @@ def SpeakText(path, text):
     engine.save_to_file(text, path)
     engine.runAndWait()
 
-def SpeechtoText(source):
-    """
-    source : Audiofile
-    returns text transcribed from the speech. Else if exception is caught,
-    will print 'Could not request results' or 'unknown error occurred'.
-    """
+def SpeachtoText(source):
     # Initialize the recognizer
     r = sr.Recognizer()
+
+    # Loop in case of errors
     try:
         with source as source:
             # prepare recognizer to receive input
             r.adjust_for_ambient_noise(source, duration=0.2)
             print("I'm listening")
+
             # listen for the user's inpit
             audio2 = r.listen(source)
             #using google to recognize audio
@@ -233,10 +264,6 @@ def SpeechtoText(source):
         print("unknown error occurred")
 
 def play_audio(audio_file_path):
-    """
-    audio_file_path : str representing .wav file in same directory
-    Plays audio from audio_file_path
-    """
     mixer.init()
     mixer.music.load(audio_file_path)
     mixer.music.play()
@@ -246,6 +273,8 @@ def main():
     # load API Key
     init()
     # the left sidebar section
+    llm = OpenAI(temperature=0)
+    encoding_name = "cl100k_base"
     with st.sidebar:
         st.title("Your documents")
         # Upload pdf box and display upload document on screen
@@ -262,7 +291,7 @@ def main():
                         delete(file_name)
                     save_uploaded_file(f)
                     if not file_name.lower().endswith(".csv"):
-                        extract(file_name)
+                        extract(file_name, encoding_name)
 
         #represent current files to query/delete
         files = os.listdir(os.curdir)
@@ -273,7 +302,6 @@ def main():
             remove_file_names.append(j)
         for c in csv_file_names:
             remove_file_names.append(c)
-        # Delete UI
         with st.container():
             st.write('Files to remove')
             colrem1, colrem2 = st.columns([3,1.3])
@@ -311,25 +339,29 @@ def main():
 
     usespeech = st.checkbox('Use Speech to Text')
     if usespeech:
+
         # #different UI
         # wav_audio_data = st_audiorec()
+
         wav_audio_data = audio_recorder(
             pause_threshold = 1.5,
             text="Click to ask your question",
             neutral_color="#FFFFFF",
             icon_size = '2x'
         )
+
         if wav_audio_data is not None:
             # # display audio data as received on the backend
             # recording = st.audio(wav_audio_data, format='audio/wav')
+
             with open('tempaudio1.wav', 'wb') as file:
                 file.write(wav_audio_data)
             recording = sr.AudioFile('./tempaudio1.wav')
             print(recording)
-            text = SpeechtoText(recording)
+            text = SpeachtoText(recording)
             user_input = text
     else:
-        # Capture User's prompt from chat box
+        # #Capture User's prompt from chat box
         user_input = st.chat_input("Ask a question about your documents ")
 
     # initialize message history
@@ -345,7 +377,6 @@ def main():
         # clears input after user enters prompt
         with st.spinner("Thinking..."):
                 if usecsv:
-                    # constructs response to csv related questions
                     response_dict = agent({"input": user_input})
                     response = response_dict['output']
                     steps = response_dict["intermediate_steps"]
@@ -364,6 +395,7 @@ def main():
                         try:
                             SpeakText(audio_file_path, response)
                             play_audio(audio_file_path)
+                            # os.remove(audio_file_path)
                         except Exception as e:
                             st.error(f"Error: Failed to generate or play audio - {e}")
 
